@@ -16,8 +16,8 @@
 *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
  
-#include "pch.h"
-#include "db/json.h"
+#include "../pch.h"
+#include "../db/db.h"
 #include "mongo/client/dbclientcursor.h"
 #include "tool.h"
 
@@ -50,8 +50,50 @@ public :
     }
 
     int run() {
-        cout << "Hello, world!" << endl;
+        string ns;
+        string dbname;
 
+        // TODO allow out to be things from STDOUT
+        ostream &out = cout;
+        
+
+        if ( ! hasParam( "dbpath" ) ) {
+            out << "mongovis only works with --dbpath" << endl;
+            return -1;
+        }
+
+        // TODO other safety checks
+
+        // TODO don't require an active mongo process?
+
+        try {
+            ns = getNS();
+        } 
+        catch (...) {
+            printHelp(cerr);
+            return -1;
+        }
+
+        dbname = getParam ( "db" );
+        Client::ReadContext cx ( dbname );
+        Database * db = cx.ctx().db();
+
+        NamespaceDetails * nsd = nsdetails( ns.c_str() );
+
+        if ( nsd->firstExtent.isNull() ) {
+            out << "ERROR: firstExtent is null" << endl;
+            return -1;
+        }
+
+        if ( ! nsd->firstExtent.isValid() ) {
+            out << "ERROR: firstExtent is invalid" << endl;
+            return -1;
+        }
+
+        out << DataFileMgr::getExtent(nsd->firstExtent)->length <<endl;
+
+        out << "Hello, world!" << endl;
+        
         return 0;
     }
 };
