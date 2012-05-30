@@ -51,7 +51,6 @@ public :
 
     int run() {
         string ns;
-        string dbname;
 
         // TODO allow out to be things from STDOUT
         ostream &out = cout;
@@ -74,7 +73,7 @@ public :
             return -1;
         }
 
-        dbname = getParam ( "db" );
+        string dbname = getParam ( "db" );
         Client::ReadContext cx ( dbname );
         Database * db = cx.ctx().db();
 
@@ -89,8 +88,16 @@ public :
             out << "ERROR: firstExtent is invalid" << endl;
             return -1;
         }
+        
+        Extent * ex = DataFileMgr::getExtent(nsd->firstExtent);
+        int extent_num = 0;
 
-        out << DataFileMgr::getExtent(nsd->firstExtent)->length <<endl;
+        while ( ex != 0 ) { // extent loop
+            extent_num++;
+            out << "extent " << extent_num << ": " << ex->length <<endl;
+            //TODO loop through records and the like here
+            ex = ex->getNextExtent();
+        }
 
         out << "Hello, world!" << endl;
         
