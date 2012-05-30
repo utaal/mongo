@@ -94,8 +94,25 @@ public :
 
         while ( ex != 0 ) { // extent loop
             extent_num++;
-            out << "extent " << extent_num << ": " << ex->length <<endl;
-            //TODO loop through records and the like here
+
+            DiskLoc dl = ex->firstRecord;
+            int rec_num = 0;
+            int total_rec_size = 0;
+
+            while ( ! dl.isNull() ) { // record loop
+                rec_num++;
+                Record * r = DataFileMgr::getRecord(dl);
+                //out << "\trecord " << rec_num << ": " << r->lengthWithHeaders() << endl;
+                total_rec_size += r->lengthWithHeaders();
+                dl = r->nextInExtent( dl ); // this loc may not be a record right?
+            }
+
+            out << "extent " << extent_num << ":\n\tsize: " << ex->length 
+                << "\n\tnumber of records: " << rec_num 
+                << "\n\tsize used by records: " << total_rec_size 
+                << "\n\t\% of extent used: " << (float)total_rec_size / (float)ex->length * 100 
+                << "\n\taverage record size: " << total_rec_size / rec_num << endl;
+
             ex = ex->getNextExtent();
         }
 
