@@ -61,9 +61,7 @@ public :
             return -1;
         }
 
-        // TODO other safety checks
-
-        // TODO don't require an active mongo process?
+        // TODO other safety checks and possibly checks for other connection types
 
         try {
             ns = getNS();
@@ -98,20 +96,27 @@ public :
             DiskLoc dl = ex->firstRecord;
             int rec_num = 0;
             int total_rec_size = 0;
+            int total_bson_size = 0;
 
             while ( ! dl.isNull() ) { // record loop
                 rec_num++;
-                Record * r = DataFileMgr::getRecord(dl);
+                Record * r = dl.rec();
                 //out << "\trecord " << rec_num << ": " << r->lengthWithHeaders() << endl;
                 total_rec_size += r->lengthWithHeaders();
-                dl = r->nextInExtent( dl ); // this loc may not be a record right?
+                total_bson_size += dl.obj().objsize();
+                dl = r->nextInExtent( dl );
             }
 
             out << "extent " << extent_num << ":\n\tsize: " << ex->length 
                 << "\n\tnumber of records: " << rec_num 
                 << "\n\tsize used by records: " << total_rec_size 
+                << "\n\tfree by records: " << ex->length - total_rec_size
                 << "\n\t\% of extent used: " << (float)total_rec_size / (float)ex->length * 100 
-                << "\n\taverage record size: " << total_rec_size / rec_num << endl;
+                << "\n\taverage record size: " << total_rec_size / rec_num 
+                << "\n\tsize used by BSONObjs: " << total_bson_size 
+                << "\n\tfree by BSON calc: " << ex->length - total_bson_size - 16 * rec_num
+                << "\n\t\% of extent used (BSON): " << (float)total_bson_size / (float)ex->length * 100 
+                << "\n\taverage BSONObj size: " << total_bson_size / rec_num << endl;
 
             ex = ex->getNextExtent();
         }
