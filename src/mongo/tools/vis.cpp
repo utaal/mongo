@@ -33,7 +33,8 @@ namespace po = boost::program_options;
 class Vis : public Tool {
 public :
     Vis() : Tool ( "vis" ) {
-        add_options();
+        add_options()
+        ("orderExtent,e", po::value<int>(), "rearrange record pointers so that they are in the same order as they are on disk");
     }
 
     virtual void preSetup() {
@@ -47,6 +48,61 @@ public :
 
     virtual void printExtraHelp(ostream& out) {
         out << "View statistics for data and journal files.\n" << endl;
+    }
+
+    // is this the best way to make the set work?
+    struct DiskLocComp {
+        bool operator() (const DiskLoc& lhs, const DiskLoc& rhs) const
+        {return lhs<rhs;}
+    };
+
+    int reorderExtent( ostream& out, Extent * ex ) {
+        //out << "got to reorderExtent and the extent was passed with size " << ex->length << endl;
+
+        DiskLoc dl = ex->firstRecord;
+        
+        set<DiskLoc, DiskLocComp> dls;
+
+        //out << "extent contents:" << endl;
+        while ( ! dl.isNull() ) {
+            //out << dl.toString() << endl;
+            dls.insert(dl);
+            dl = dl.rec()->nextInExtent( dl );
+        }
+
+        set<DiskLoc, DiskLocComp>::iterator it;
+        //out << "set contents:" << endl;
+        DiskLoc prev = DiskLoc();
+        DiskLoc cur = DiskLoc();
+
+        for (it = dls.begin(); it != dls.end(); it++) {
+            prev = cur;
+            cur = *it;
+            // dont think if ( prev.isNull() ) is necessary cuz they store nulloffset
+                //set prevOfs = DiskLoc::NullOfs;
+            if ( ! prev.isNull() )
+                prev.rec()->np()->nextOfs = cur.getOfs();
+            else {
+                //out << "new first" << endl;
+                ex->firstRecord = cur;
+            }
+            cur.rec()->np()->prevOfs = prev.getOfs();
+
+            //out << cur.toString() << endl;
+        }
+        cur.rec()->np()->nextOfs = DiskLoc::NullOfs;
+
+        // result loop to see if its ordered now..
+
+        dl = ex->firstRecord;
+        
+        //out << "resulting extent contents:"<< endl;
+        while ( ! dl.isNull() ) {
+            //out << dl.toString() << endl;
+            dl = dl.rec()->nextInExtent( dl );
+        }
+
+        return 0;
     }
 
     int run() {
@@ -86,6 +142,28 @@ public :
             out << "ERROR: firstExtent is invalid" << endl;
             return -1;
         }
+
+        if ( hasParam( "orderExtent" ) ) {
+            int extent_num = getParam("orderExtent", 0);
+            Extent * ex = DataFileMgr::getExtent(nsd->firstExtent);
+            out << "extent branch " << extent_num << endl;
+
+            for (int i = 1; i < extent_num; i++) {
+                ex = ex->getNextExtent();
+                if ( ex == 0 ) {
+                    out << "ERROR: extent " << extent_num << " does not exist" << endl;
+                    return -1;
+                }
+            }
+
+            //out << "size of extent pre passing: " << ex->length << endl;
+            if ( reorderExtent( out, ex ) == 0 ) {
+                out << "extent " << extent_num << "reordered" << endl;
+                return 0;
+            }
+
+        }
+
         
         Extent * ex = DataFileMgr::getExtent(nsd->firstExtent);
         int extent_num = 0;
