@@ -16,16 +16,22 @@
 *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
  
-#include "../pch.h"
-#include "../db/db.h"
-#include "mongo/client/dbclientcursor.h"
-#include "tool.h"
+#include "mongo/pch.h"
 
 #include <iostream>
 
 #include <boost/filesystem/convenience.hpp>
 #include <boost/filesystem/operations.hpp>
 
+#include "mongo/client/dbclientcursor.h"
+#include "mongo/db/db.h"
+#include "mongo/tools/tool.h"
+
+#if 1
+#define VISDEBUG(x) cout << x << endl
+#else
+#define VISDEBUG(x)
+#endif
 using namespace mongo;
 
 namespace po = boost::program_options;
@@ -36,6 +42,24 @@ public :
         add_options()
         ("orderExtent,e", po::value<int>(), "rearrange record pointers so that they are in the same order as they are on disk");
     }
+
+    struct Data {
+        long long numEntries;
+        long long bsonSize;
+        long long recSize;
+        long long onDiskSize;
+
+        const Data operator += (const Data &rhs) {
+            Data result = *this;
+
+            this->numEntries += rhs.numEntries;
+            this->recSize += rhs.recSize;
+            this->bsonSize += rhs.bsonSize;
+            this->onDiskSize += rhs.onDiskSize;
+
+            return result;
+        }
+    } ;
 
     virtual void preSetup() {
         string out = getParam("out");
@@ -50,17 +74,32 @@ public :
         out << "View statistics for data and journal files.\n" << endl;
     }
 
+    void printStats(ostream& out, string name, Data data) {
+        out << name << ':'
+            << "\n\tsize: " << data.onDiskSize 
+            << "\n\tnumber of records: " << data.numEntries 
+            << "\n\tsize used by records: " << data.recSize 
+            << "\n\tfree by records: " << data.onDiskSize - data.recSize
+            << "\n\t\% of " << name << " used: " << (float)data.recSize / (float)data.onDiskSize * 100 
+            << "\n\taverage record size: " << data.recSize / data.numEntries 
+            << "\n\tsize used by BSONObjs: " << data.bsonSize 
+            << "\n\tfree by BSON calc: " << data.onDiskSize - data.bsonSize - 16 * data.numEntries
+            << "\n\t\% of " << name << " used (BSON): " << (float)data.bsonSize / (float)data.onDiskSize * 100 
+            << "\n\taverage BSONObj size: " << data.bsonSize / data.numEntries 
+            << endl;
+    }
+
     int reorderExtent(ostream& out, Extent * ex) {
         set<DiskLoc> dls;
 
-        out << "extent contents:" << endl;
+        VISDEBUG("extent contents:");
         for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = dl.rec()->nextInExtent(dl)) {
-            out << dl.toString() << endl;
+            VISDEBUG(dl.toString());
             dls.insert(dl);
         }
 
         set<DiskLoc>::iterator it;
-        out << "set contents:" << endl;
+        VISDEBUG("set contents:");
         DiskLoc prev = DiskLoc();
         DiskLoc cur = DiskLoc();
 
@@ -68,24 +107,22 @@ public :
             prev = cur;
             cur = *it;
             if (prev.isNull()) {
-                out << "new first" << endl;
                 getDur().writingDiskLoc( ex->firstRecord ) = cur;
             }
             else {
                 getDur().writingInt( prev.rec()->np()->nextOfs ) = cur.getOfs();
             }
+
             getDur().writingInt( cur.rec()->np()->prevOfs ) = prev.getOfs();
 
-            out << cur.toString() << endl;
+            VISDEBUG(cur.toString());
         }
         getDur().writingInt( cur.rec()->np()->nextOfs ) = DiskLoc::NullOfs;
 
-        // result loop to see if its ordered now..
-
-        //TODO look at geo to see how single file deve blocks work
-        out << "resulting extent contents:"<< endl;
+        // result loop to see if its ordered now only valuable for debugging
+        VISDEBUG("resulting extent contents:");
         for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = dl.rec()->nextInExtent(dl)) {
-            out << dl.toString() << endl;
+            VISDEBUG(dl.toString());
         }
 
         return 0;
@@ -96,7 +133,6 @@ public :
 
         // TODO allow out to be things from STDOUT
         ostream& out = cout;
-        
 
         if (! hasParam("dbpath")) {
             out << "mongovis only works with --dbpath" << endl;
@@ -130,69 +166,52 @@ public :
         }
 
         if (hasParam("orderExtent")) {
-            int extent_num = getParam("orderExtent", 0);
+            int extentNum = getParam("orderExtent", 0);
             Extent * ex = DataFileMgr::getExtent(nsd->firstExtent);
-            //out << "extent branch " << extent_num << endl;
 
-            if (extent_num < 0) {
+            if (extentNum < 0) {
                 out << "ERROR: extent number must be non-negative" << endl;
             }
 
-            for (int i = 1; i < extent_num; i++) {
+            for (int i = 1; i < extentNum; i++) {
                 ex = ex->getNextExtent();
                 if (ex == 0) {
-                    out << "ERROR: extent " << extent_num << " does not exist" << endl;
+                    out << "ERROR: extent " << extentNum << " does not exist" << endl;
                     return -1;
                 }
             }
 
-            //out << "size of extent pre passing: " << ex->length << endl;
             if (reorderExtent(out, ex) == 0) {
-                out << "extent " << extent_num << "reordered" << endl;
+                out << "extent " << extentNum << " reordered" << endl;
                 return 0;
             }
             else {
-                out << "An error occurred while repairing extent " << extent_num << endl;
+                out << "An error occurred while repairing extent " << extentNum << endl;
                 return -1;
             }
         }
 
+        int extentNum = 0;
         
-        
-        int extent_num = 0;
+        Data collectionData = {0, 0, 0, 0};
 
         for (Extent * ex = DataFileMgr::getExtent(nsd->firstExtent); ex != 0; ex = ex->getNextExtent()) { // extent loop
-
-            
-            //TODO make struct, external struct for real totals, make += op
-            int rec_num = 0;
-            int total_rec_size = 0;
-            int total_bson_size = 0;
+            Data extentData = {0, 0, 0, ex->length};
             Record * r;
 
             for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) { // record loop
-                rec_num++;
+                extentData.numEntries++;
                 r = dl.rec();
-                total_rec_size += r->lengthWithHeaders();
-                total_bson_size += dl.obj().objsize();
+                extentData.recSize += r->lengthWithHeaders();
+                extentData.bsonSize += dl.obj().objsize();
             }
 
-            //TODO compute/print stats
-            out << "extent " << extent_num << ':'
-                << "\n\tsize: " << ex->length 
-                << "\n\tnumber of records: " << rec_num 
-                << "\n\tsize used by records: " << total_rec_size 
-                << "\n\tfree by records: " << ex->length - total_rec_size
-                << "\n\t\% of extent used: " << (float)total_rec_size / (float)ex->length * 100 
-                << "\n\taverage record size: " << total_rec_size / rec_num 
-                << "\n\tsize used by BSONObjs: " << total_bson_size 
-                << "\n\tfree by BSON calc: " << ex->length - total_bson_size - 16 * rec_num
-                << "\n\t\% of extent used (BSON): " << (float)total_bson_size / (float)ex->length * 100 
-                << "\n\taverage BSONObj size: " << total_bson_size / rec_num 
-                << endl;
-
-            extent_num++;
+            printStats(out, str::stream() << "extent number " << extentNum, extentData);
+            collectionData += extentData;
+            extentNum++;
         }
+        
+        printStats(out, "collection", collectionData);
         return 0;
     }
 };
