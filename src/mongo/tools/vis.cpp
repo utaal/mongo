@@ -27,7 +27,7 @@
 #include "mongo/db/db.h"
 #include "mongo/tools/tool.h"
 
-#if 1
+#if 0
 #define VISDEBUG(x) cout << x << endl
 #else
 #define VISDEBUG(x)
@@ -89,7 +89,21 @@ public :
             << endl;
     }
 
-    int reorderExtent(ostream& out, Extent * ex) {
+    int reorderExtent(ostream& out, int extentNum, NamespaceDetails const * const nsd) {
+        Extent * ex = DataFileMgr::getExtent(nsd->firstExtent);
+
+        if (extentNum < 0) {
+            out << "ERROR: extent number must be non-negative" << endl;
+            return -1;
+        }
+
+        for (int i = 1; i < extentNum; i++) {
+            ex = ex->getNextExtent();
+            if (ex == 0) {
+                out << "ERROR: extent " << extentNum << " does not exist" << endl;
+                return -1;
+            }
+        }
         set<DiskLoc> dls;
 
         VISDEBUG("extent contents:");
@@ -167,21 +181,8 @@ public :
 
         if (hasParam("orderExtent")) {
             int extentNum = getParam("orderExtent", 0);
-            Extent * ex = DataFileMgr::getExtent(nsd->firstExtent);
-
-            if (extentNum < 0) {
-                out << "ERROR: extent number must be non-negative" << endl;
-            }
-
-            for (int i = 1; i < extentNum; i++) {
-                ex = ex->getNextExtent();
-                if (ex == 0) {
-                    out << "ERROR: extent " << extentNum << " does not exist" << endl;
-                    return -1;
-                }
-            }
-
-            if (reorderExtent(out, ex) == 0) {
+            
+            if (reorderExtent(out, extentNum, nsd) == 0) {
                 out << "extent " << extentNum << " reordered" << endl;
                 return 0;
             }
