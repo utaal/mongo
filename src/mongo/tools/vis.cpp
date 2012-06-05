@@ -40,7 +40,8 @@ class Vis : public Tool {
 public :
     Vis() : Tool ("vis") {
         add_options()
-        ("orderExtent,e", po::value<int>(), "rearrange record pointers so that they are in the same order as they are on disk");
+        ("orderExtent,e", po::value<int>(), "rearrange record pointers so that they are in the same order as they are on disk")
+        ("namespaces", "loop over all namespace to find an map of namespaces over extents on disk");
     }
 
     struct Data {
@@ -142,6 +143,36 @@ public :
         return 0;
     }
 
+    int crawlNamespaces(ostream& out, string ns) {
+        NamespaceIndex * nsi = nsindex(ns.c_str());
+        list<string> namespaces;
+        nsi->getNamespaces(namespaces, true);
+        for (list<string>::iterator itr = namespaces.begin(); itr != namespaces.end(); itr++) { // namespace loop
+            out << "namespace " << *itr << ':' << endl;
+            NamespaceDetails * nsd = nsdetails(itr->c_str());
+
+            if (nsd->firstExtent.isNull()) {
+                out << "ERROR: firstExtent is null" << endl;
+                return -1;
+            }
+
+            if (! nsd->firstExtent.isValid()) {
+                out << "ERROR: firstExtent is invalid" << endl;
+                return -1;
+            }
+
+            int extentNum = 0;
+            for (Extent * ex = DataFileMgr::getExtent(nsd->firstExtent); ex != 0; ex = ex->getNextExtent()) { // extent loop
+                out << "\textent number " << extentNum << ':' 
+                    << "\n\t\tstarting loc: " << ex->myLoc.a() << '.' << ex->myLoc.getOfs()
+                    << "\n\t\tsize: " << ex->length
+                    << endl;
+                extentNum++;
+            }
+        }
+        return 0;
+    }
+
     int run() {
         string ns;
 
@@ -165,6 +196,15 @@ public :
 
         string dbname = getParam ("db");
         Client::ReadContext cx (dbname);
+
+        if (hasParam("namespaces")) {
+            if (crawlNamespaces(out, ns) == 0) {
+                return 0;
+            }
+            else {
+                return -1;
+            }
+        }
 
         NamespaceDetails * nsd = nsdetails(ns.c_str());
         //TODO make sure nsd is valid/safe/etc
