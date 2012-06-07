@@ -40,8 +40,11 @@ class Vis : public Tool {
 public :
     Vis() : Tool ("vis") {
         add_options()
+        ("freeBlocks", "report number of free blocks of each size")
+        ("mincore", po::value<string>(), "report which files are in core memory")
+        ("namespaces", "loop over all namespace to find an map of namespaces over extents on disk")
         ("orderExtent,e", po::value<int>(), "rearrange record pointers so that they are in the same order as they are on disk")
-        ("namespaces", "loop over all namespace to find an map of namespaces over extents on disk");
+        ;
     }
 
     struct Data {
@@ -143,6 +146,22 @@ public :
         return 0;
     }
 
+    int freeBlocks(ostream& out, NamespaceDetails const * const nsd) {
+        for (int i = 0; i < 19; i++) { // 19 should be Buckets, not sure where to find this and stop being so magical
+            DiskLoc dl = nsd->deletedList[i];
+            out << "Bucket " << i << ": ";
+            int count = 0;
+            while (!dl.isNull()) {
+                count++;
+                DeletedRecord *r = dl.drec();
+                //DiskLoc extLoc(dl.a(), r->extentOfs()); this could be useful if we want blocks by size per extent
+                dl = r->nextDeleted();
+            }
+            out << count << endl;
+        }
+        return 0;
+    }
+
     int crawlNamespaces(ostream& out, string ns) {
         NamespaceIndex * nsi = nsindex(ns.c_str());
         list<string> namespaces;
@@ -217,6 +236,16 @@ public :
         if (! nsd->firstExtent.isValid()) {
             out << "ERROR: firstExtent is invalid" << endl;
             return -1;
+        }
+
+        if (hasParam("freeBlocks")) {
+            if (freeBlocks(out, nsd) == 0) {
+                return 0;
+            }
+            else {
+                out << "Error: failed to successfully traverse free blocks" <<endl;
+                return -1;
+            }
         }
 
         if (hasParam("orderExtent")) {
