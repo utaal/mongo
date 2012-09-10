@@ -40,7 +40,7 @@ class Vis : public Tool {
 public :
     Vis() : Tool ("vis") {
         add_options()
-        ("freeBlocks", "report number of free blocks of each size")
+        ("freeRecords", "report number of free records of each size")
         ("mincore", po::value<string>(), "report which files are in core memory")
         ("namespaces", "loop over all namespace to find an map of namespaces over extents on disk")
         ("orderExtent,e", po::value<int>(), "rearrange record pointers so that they are in the same order as they are on disk")
@@ -146,8 +146,8 @@ public :
         return 0;
     }
 
-    int freeBlocks(ostream& out, NamespaceDetails const * const nsd) {
         for (int i = 0; i < 19; i++) { // 19 should be Buckets, not sure where to find this and stop being so magical
+    int freeRecords(ostream& out, NamespaceDetails const * const nsd) {
             DiskLoc dl = nsd->deletedList[i];
             out << "Bucket " << i << ": ";
             int count = 0;
@@ -238,8 +238,8 @@ public :
             return -1;
         }
 
-        if (hasParam("freeBlocks")) {
-            if (freeBlocks(out, nsd) == 0) {
+        if (hasParam("freeRecords")) {
+            if (freeRecords(out, nsd) == 0) {
                 return 0;
             }
             else {
