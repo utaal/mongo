@@ -183,7 +183,7 @@ public :
             b.append("bucket", i);
             b.append("bucketSize", bucketSizes[i]);
             b.append("count", count);
-            b.append("totsize", (long long int) totsize);
+            b.append("totsize", (int) totsize);
             BSONObj bson = b.obj();
             out << count << " records, average size " << averageSize << endl;
             out << "BSON " << bson.toString() << endl;
@@ -221,6 +221,65 @@ public :
         return 0;
     }
 
+    Data __examineExtent(Extent * ex, BSONObjBuilder * bExtent, int granularity, int startOfs, int stopOfs) {
+        startOfs = (startOfs > 0) ? startOfs : 0;
+        stopOfs = (stopOfs <= ex->length) ? stopOfs : ex->length;
+        verify(startOfs == 0);
+        verify(stopOfs == ex->length);
+
+        Data extentData = {0, 0, 0, ex->length};
+
+        Record * r;
+        int numberOfChunks = (ex->length + granularity - 1) / granularity;
+        //totNumberOfChunks += numberOfChunks;
+        DEV log() << "this extent (" << ex->length << " long) will be split in " << numberOfChunks << " chunks" << endl;
+        vector<Data> chunkData(numberOfChunks);
+        for (vector<Data>::iterator it = chunkData.begin(); it != chunkData.end(); ++it) {
+            *it = (Data) {0, 0, 0, granularity};
+        }
+        chunkData[numberOfChunks - 1].onDiskSize = ex->length - (granularity * (numberOfChunks - 1));
+
+        for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) { // record loop
+            // if (showExtents) {
+            //     printStats(out, str::stream() << "extent " << extentNum << ", chunk " << currentChunk, chunkData);
+            // }
+            r = dl.rec();
+            Data& chunk = chunkData.at((dl.getOfs() - ex->myLoc.getOfs()) / granularity);
+            chunk.numEntries++;
+            extentData.numEntries++;
+            chunk.recSize += r->lengthWithHeaders();
+            extentData.recSize += r->lengthWithHeaders();
+            chunk.bsonSize += dl.obj().objsize();
+            extentData.bsonSize += dl.obj().objsize();
+        }
+        BSONArrayBuilder bChunkArray;
+        for (vector<Data>::iterator it = chunkData.begin(); it != chunkData.end(); ++it) {
+            BSONObjBuilder bChunk;
+            it->appendToBSONObjBuilder(&bChunk);
+            bChunkArray.append(bChunk.obj());
+            // if (showExtents) {
+            //     printStats(out, str::stream() << "extent " << extentNum << ", chunk" << currentChunk, chunkData);
+            // }
+        }
+
+        // if (showExtents) {
+        //     printStats(out, str::stream() << "extent number " << extentNum, extentData);
+        // }
+        extentData.appendToBSONObjBuilder(bExtent);
+        bExtent->append("chunks", bChunkArray.obj());
+
+        return extentData;
+    }
+    
+    inline Data examineExtent(Extent * ex, BSONObjBuilder * bExtent, int granularity) {
+        return __examineExtent(ex, bExtent, granularity, 0, INT_MAX);
+    }
+
+    inline Data examineExtent(Extent * ex, BSONObjBuilder * bExtent, int numChunks, int startOfs, int endOfs) {
+        int granularity = (endOfs - startOfs + numChunks - 1) / numChunks;
+        return __examineExtent(ex, bExtent, granularity, startOfs, endOfs);
+    }
+
     void examineCollection(ostream& out, NamespaceDetails * nsd, bool useNumChunks, int granularity, int numChunks, bool showExtents) {
         int extentNum = 0;
         
@@ -228,7 +287,7 @@ public :
         Data collectionData = {0, 0, 0, 0};
 
         if (useNumChunks) {
-            long long totsize = 0;
+            int totsize = 0;
             int count = 0;
             for (Extent * ex = DataFileMgr::getExtent(nsd->firstExtent); ex != 0; ex = ex->getNextExtent()) {
                 totsize += ex->length;
@@ -239,55 +298,14 @@ public :
             DEV log() << "granularity will be " << granularity << endl;
         }
 
-        int totNumberOfChunks = 0;
+        //int totNumberOfChunks = 0;
         for (Extent * ex = DataFileMgr::getExtent(nsd->firstExtent); ex != 0; ex = ex->getNextExtent()) { // extent loop
-            Data extentData = {0, 0, 0, ex->length};
-
-            Record * r;
-            int numberOfChunks = (ex->length + granularity - 1) / granularity;
-            totNumberOfChunks += numberOfChunks;
-            DEV log() << "this extent (" << ex->length << " long) will be split in " << numberOfChunks << " chunks" << endl;
-            vector<Data> chunkData(numberOfChunks);
-            for (vector<Data>::iterator it = chunkData.begin(); it != chunkData.end(); ++it) {
-                *it = (Data) {0, 0, 0, granularity};
-            }
-            chunkData[numberOfChunks - 1].onDiskSize = ex->length - (granularity * (numberOfChunks - 1));
-
-            for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) { // record loop
-                // if (showExtents) {
-                //     printStats(out, str::stream() << "extent " << extentNum << ", chunk " << currentChunk, chunkData);
-                // }
-                r = dl.rec();
-                Data& chunk = chunkData.at((dl.getOfs() - ex->myLoc.getOfs()) / granularity);
-                chunk.numEntries++;
-                extentData.numEntries++;
-                chunk.recSize += r->lengthWithHeaders();
-                extentData.recSize += r->lengthWithHeaders();
-                chunk.bsonSize += dl.obj().objsize();
-                extentData.bsonSize += dl.obj().objsize();
-            }
-            BSONArrayBuilder bChunkArray;
-            for (vector<Data>::iterator it = chunkData.begin(); it != chunkData.end(); ++it) {
-                BSONObjBuilder bChunk;
-                it->appendToBSONObjBuilder(&bChunk);
-                bChunkArray.append(bChunk.obj());
-                // if (showExtents) {
-                //     printStats(out, str::stream() << "extent " << extentNum << ", chunk" << currentChunk, chunkData);
-                // }
-            }
-
-            if (showExtents) {
-                printStats(out, str::stream() << "extent number " << extentNum, extentData);
-            }
             BSONObjBuilder bExtent;
-            extentData.appendToBSONObjBuilder(&bExtent);
-            
-            bExtent.append("chunks", bChunkArray.obj());
+            collectionData += examineExtent(ex, &bExtent, granularity);
             bExtentArray.append(bExtent.obj());
-            collectionData += extentData;
             extentNum++;
         }
-        DEV log() << " tot num of chunks: " << totNumberOfChunks << endl;
+        //DEV log() << " tot num of chunks: " << totNumberOfChunks << endl;
         
         printStats(out, "collection", collectionData);
         BSONObj collObj = bExtentArray.obj();
