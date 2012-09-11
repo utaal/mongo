@@ -224,27 +224,26 @@ public :
     Data __examineExtent(Extent * ex, BSONObjBuilder * bExtent, int granularity, int startOfs, int stopOfs) {
         startOfs = (startOfs > 0) ? startOfs : 0;
         stopOfs = (stopOfs <= ex->length) ? stopOfs : ex->length;
-        verify(startOfs == 0);
-        verify(stopOfs == ex->length);
 
-        Data extentData = {0, 0, 0, ex->length};
+        int length = stopOfs - startOfs;
+        Data extentData = {0, 0, 0, stopOfs - startOfs};
 
         Record * r;
-        int numberOfChunks = (ex->length + granularity - 1) / granularity;
+        int numberOfChunks = (length + granularity - 1) / granularity;
         //totNumberOfChunks += numberOfChunks;
-        DEV log() << "this extent (" << ex->length << " long) will be split in " << numberOfChunks << " chunks" << endl;
+        DEV log() << "this extent or part of extent (" << length << " long) will be split in " << numberOfChunks << " chunks" << endl;
         vector<Data> chunkData(numberOfChunks);
         for (vector<Data>::iterator it = chunkData.begin(); it != chunkData.end(); ++it) {
             *it = (Data) {0, 0, 0, granularity};
         }
-        chunkData[numberOfChunks - 1].onDiskSize = ex->length - (granularity * (numberOfChunks - 1));
+        chunkData[numberOfChunks - 1].onDiskSize = length - (granularity * (numberOfChunks - 1));
 
         for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) { // record loop
             // if (showExtents) {
             //     printStats(out, str::stream() << "extent " << extentNum << ", chunk " << currentChunk, chunkData);
             // }
             r = dl.rec();
-            Data& chunk = chunkData.at((dl.getOfs() - ex->myLoc.getOfs()) / granularity);
+            Data& chunk = chunkData.at((dl.getOfs() - ex->myLoc.getOfs() - startOfs) / granularity);
             chunk.numEntries++;
             extentData.numEntries++;
             chunk.recSize += r->lengthWithHeaders();
