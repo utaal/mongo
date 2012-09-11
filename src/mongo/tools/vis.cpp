@@ -25,13 +25,10 @@
 
 #include "mongo/client/dbclientcursor.h"
 #include "mongo/db/db.h"
+#include "mongo/db/jsobj.h"
+#include "mongo/db/namespace_details.h"
 #include "mongo/tools/tool.h"
 
-#if 0
-#define VISDEBUG(x) cout << x << endl
-#else
-#define VISDEBUG(x)
-#endif
 using namespace mongo;
 
 namespace po = boost::program_options;
@@ -42,6 +39,8 @@ public :
         add_options()
         ("freeRecords", "report number of free records of each size")
         ("mincore", po::value<string>(), "report which files are in core memory")
+        ("granularity", po::value<int>(), "granularity in bytes for the detailed space usage reports")
+        ("showExtents", "show detailed info for each extent")
         ("namespaces", "loop over all namespace to find an map of namespaces over extents on disk")
         ("orderExtent,e", po::value<int>(), "rearrange record pointers so that they are in the same order as they are on disk")
         ;
@@ -63,6 +62,23 @@ public :
 
             return result;
         }
+
+        // NOTE: ownership stays with the caller
+        void appendToBSONObjBuilder(BSONObjBuilder* b) const {
+            b->append("numEntries", numEntries);
+            b->append("bsonSize", bsonSize);
+            b->append("recSize", recSize);
+            b->append("onDiskSize", onDiskSize);
+        }
+
+        // Data & operator = (const Data &rhs) {
+        //     this->numEntries = rhs.numEntries;
+        //     this->recSize = rhs.recSize;
+        //     this->bsonSize = rhs.bsonSize;
+        //     this->onDiskSize = rhs.onDiskSize;
+
+        //     return *this;
+        // }
     } ;
 
     virtual void preSetup() {
@@ -85,11 +101,11 @@ public :
             << "\n\tsize used by records: " << data.recSize 
             << "\n\tfree by records: " << data.onDiskSize - data.recSize
             << "\n\t\% of " << name << " used: " << (float)data.recSize / (float)data.onDiskSize * 100 
-            << "\n\taverage record size: " << data.recSize / data.numEntries 
+            << "\n\taverage record size: " << (data.numEntries > 0 ? data.recSize / data.numEntries : 0)
             << "\n\tsize used by BSONObjs: " << data.bsonSize 
             << "\n\tfree by BSON calc: " << data.onDiskSize - data.bsonSize - 16 * data.numEntries
             << "\n\t\% of " << name << " used (BSON): " << (float)data.bsonSize / (float)data.onDiskSize * 100 
-            << "\n\taverage BSONObj size: " << data.bsonSize / data.numEntries 
+            << "\n\taverage BSONObj size: " << (data.numEntries > 0 ? data.bsonSize / data.numEntries : 0)
             << endl;
     }
 
@@ -110,14 +126,14 @@ public :
         }
         set<DiskLoc> dls;
 
-        VISDEBUG("extent contents:");
+        DEV log() << "extent contents:" << endl;
         for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = dl.rec()->nextInExtent(dl)) {
-            VISDEBUG(dl.toString());
+            DEV log() << dl.toString() << endl;
             dls.insert(dl);
         }
 
         set<DiskLoc>::iterator it;
-        VISDEBUG("set contents:");
+        DEV log() << "set contents:" << endl;
         DiskLoc prev = DiskLoc();
         DiskLoc cur = DiskLoc();
 
@@ -133,31 +149,43 @@ public :
 
             getDur().writingInt( cur.rec()->np()->prevOfs ) = prev.getOfs();
 
-            VISDEBUG(cur.toString());
+            DEV log() << cur.toString() << endl;
         }
         getDur().writingInt( cur.rec()->np()->nextOfs ) = DiskLoc::NullOfs;
 
         // result loop to see if its ordered now only valuable for debugging
-        VISDEBUG("resulting extent contents:");
+        DEV log() << "resulting extent contents:" << endl;
         for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = dl.rec()->nextInExtent(dl)) {
-            VISDEBUG(dl.toString());
+            DEV log() << dl.toString() << endl;
         }
 
         return 0;
     }
 
-        for (int i = 0; i < 19; i++) { // 19 should be Buckets, not sure where to find this and stop being so magical
     int freeRecords(ostream& out, NamespaceDetails const * const nsd) {
+        for (int i = 0; i < mongo::Buckets; i++) { // TODO: modify behaviour when referring to capped collections
+                                                   // see NamespaceDetails::deletedList
             DiskLoc dl = nsd->deletedList[i];
-            out << "Bucket " << i << ": ";
+            out << "Bucket " << i << " (max size " << bucketSizes[i] << "): ";
             int count = 0;
+            long totsize = 0;
             while (!dl.isNull()) {
                 count++;
                 DeletedRecord *r = dl.drec();
+                totsize += r->lengthWithHeaders();
+                //DEV log() << "vis: deleted record of size " << r->lengthWithHeaders() << endl;
                 //DiskLoc extLoc(dl.a(), r->extentOfs()); this could be useful if we want blocks by size per extent
                 dl = r->nextDeleted();
             }
-            out << count << endl;
+            int averageSize = count > 0 ? totsize / count : 0;
+            BSONObjBuilder b;
+            b.append("bucket", i);
+            b.append("bucketSize", bucketSizes[i]);
+            b.append("count", count);
+            b.append("totsize", (long long int) totsize);
+            BSONObj bson = b.obj();
+            out << count << " records, average size " << averageSize << endl;
+            out << "BSON " << bson.toString() << endl;
         }
         return 0;
     }
@@ -167,7 +195,7 @@ public :
         list<string> namespaces;
         nsi->getNamespaces(namespaces, true);
         for (list<string>::iterator itr = namespaces.begin(); itr != namespaces.end(); itr++) { // namespace loop
-            out << "namespace " << *itr << ':' << endl;
+            out << "---------------------------------------\n" << "namespace " << *itr << ':' << endl;
             NamespaceDetails * nsd = nsdetails(itr->c_str());
 
             if (nsd->firstExtent.isNull()) {
@@ -192,6 +220,68 @@ public :
         return 0;
     }
 
+    void examineCollection(ostream& out, NamespaceDetails * nsd, int granularity, bool showExtents) {
+        int extentNum = 0;
+        
+        BSONArrayBuilder bExtentArray;
+        Data collectionData = {0, 0, 0, 0};
+
+        for (Extent * ex = DataFileMgr::getExtent(nsd->firstExtent); ex != 0; ex = ex->getNextExtent()) { // extent loop
+            Data extentData = {0, 0, 0, ex->length};
+
+            Record * r;
+            int lastExtentOfs = 0;
+            int numberOfChunks = (ex->length + granularity - 1) / granularity;
+            DEV log() << "this extent (" << ex->length << " long) will be split in " << numberOfChunks << " chunks" << endl;
+            vector<Data> chunkData(numberOfChunks);
+            for (vector<Data>::iterator it = chunkData.begin(); it != chunkData.end(); ++it) {
+                *it = (Data) {0, 0, 0, granularity};
+            }
+
+            for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) { // record loop
+                // if (r->extentOfs() >= granularity * (currentChunk + 1)) {
+                //     chunkData.appendToBSONObjBuilder(&bChunk);
+                //     bChunkArray.append(bChunk.obj());
+                //     if (showExtents) {
+                //         printStats(out, str::stream() << "extent " << extentNum << ", chunk " << currentChunk, chunkData);
+                //     }
+                // }
+                r = dl.rec();
+                Data& chunk = chunkData.at((dl.getOfs() - ex->myLoc.getOfs()) / granularity);
+                chunk.numEntries++;
+                extentData.numEntries++;
+                chunk.recSize += r->lengthWithHeaders();
+                extentData.recSize += r->lengthWithHeaders();
+                chunk.bsonSize += dl.obj().objsize();
+                extentData.bsonSize += dl.obj().objsize();
+            }
+            BSONArrayBuilder bChunkArray;
+            for (vector<Data>::iterator it = chunkData.begin(); it != chunkData.end(); ++it) {
+                BSONObjBuilder bChunk;
+                it->appendToBSONObjBuilder(&bChunk);
+                bChunkArray.append(bChunk.obj());
+                // if (showExtents) {
+                //     printStats(out, str::stream() << "extent " << extentNum << ", chunk" << currentChunk, chunkData);
+                // }
+            }
+
+            if (showExtents) {
+                printStats(out, str::stream() << "extent number " << extentNum, extentData);
+            }
+            BSONObjBuilder bExtent;
+            extentData.appendToBSONObjBuilder(&bExtent);
+            
+            bExtent.append("chunks", bChunkArray.obj());
+            bExtentArray.append(bExtent.obj());
+            collectionData += extentData;
+            extentNum++;
+        }
+        
+        printStats(out, "collection", collectionData);
+        BSONObj collObj = bExtentArray.obj();
+        out << "BSON " << collObj.jsonString() << endl;
+    }
+
     int run() {
         string ns;
 
@@ -204,6 +294,17 @@ public :
         }
 
         // TODO other safety checks and possibly checks for other connection types
+        string dbname = getParam ("db");
+        Client::ReadContext cx (dbname);
+
+        if (hasParam("namespaces")) {
+            if (crawlNamespaces(out, dbname) == 0) {
+                return 0;
+            }
+            else {
+                return -1;
+            }
+        }
 
         try {
             ns = getNS();
@@ -211,18 +312,6 @@ public :
         catch (...) {
             printHelp(cerr);
             return -1;
-        }
-
-        string dbname = getParam ("db");
-        Client::ReadContext cx (dbname);
-
-        if (hasParam("namespaces")) {
-            if (crawlNamespaces(out, ns) == 0) {
-                return 0;
-            }
-            else {
-                return -1;
-            }
         }
 
         NamespaceDetails * nsd = nsdetails(ns.c_str());
@@ -261,27 +350,10 @@ public :
             }
         }
 
-        int extentNum = 0;
-        
-        Data collectionData = {0, 0, 0, 0};
+        int granularity = getParam("granularity", 2<<20); // 1 MB by default
 
-        for (Extent * ex = DataFileMgr::getExtent(nsd->firstExtent); ex != 0; ex = ex->getNextExtent()) { // extent loop
-            Data extentData = {0, 0, 0, ex->length};
-            Record * r;
+        examineCollection(out, nsd, granularity, hasParam("showExtents"));
 
-            for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) { // record loop
-                extentData.numEntries++;
-                r = dl.rec();
-                extentData.recSize += r->lengthWithHeaders();
-                extentData.bsonSize += dl.obj().objsize();
-            }
-
-            printStats(out, str::stream() << "extent number " << extentNum, extentData);
-            collectionData += extentData;
-            extentNum++;
-        }
-        
-        printStats(out, "collection", collectionData);
         return 0;
     }
 };
