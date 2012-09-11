@@ -40,6 +40,7 @@ public :
         ("freeRecords", "report number of free records of each size")
         ("mincore", po::value<string>(), "report which files are in core memory")
         ("granularity", po::value<int>(), "granularity in bytes for the detailed space usage reports")
+        ("numChunks", po::value<int>(), "number of chunks the namespace should be split into for deltailed usage reports")
         ("showExtents", "show detailed info for each extent")
         ("namespaces", "loop over all namespace to find an map of namespaces over extents on disk")
         ("orderExtent,e", po::value<int>(), "rearrange record pointers so that they are in the same order as they are on disk")
@@ -220,31 +221,41 @@ public :
         return 0;
     }
 
-    void examineCollection(ostream& out, NamespaceDetails * nsd, int granularity, bool showExtents) {
+    void examineCollection(ostream& out, NamespaceDetails * nsd, bool useNumChunks, int granularity, int numChunks, bool showExtents) {
         int extentNum = 0;
         
         BSONArrayBuilder bExtentArray;
         Data collectionData = {0, 0, 0, 0};
 
+        if (useNumChunks) {
+            long long totsize = 0;
+            int count = 0;
+            for (Extent * ex = DataFileMgr::getExtent(nsd->firstExtent); ex != 0; ex = ex->getNextExtent()) {
+                totsize += ex->length;
+                count++;
+            }
+            //granularity = (totsize + (numChunks - count - 1)) / (numChunks - count);
+            granularity = (totsize + (numChunks - count - 1)) / (numChunks - count);
+            DEV log() << "granularity will be " << granularity << endl;
+        }
+
+        int totNumberOfChunks = 0;
         for (Extent * ex = DataFileMgr::getExtent(nsd->firstExtent); ex != 0; ex = ex->getNextExtent()) { // extent loop
             Data extentData = {0, 0, 0, ex->length};
 
             Record * r;
-            int lastExtentOfs = 0;
             int numberOfChunks = (ex->length + granularity - 1) / granularity;
+            totNumberOfChunks += numberOfChunks;
             DEV log() << "this extent (" << ex->length << " long) will be split in " << numberOfChunks << " chunks" << endl;
             vector<Data> chunkData(numberOfChunks);
             for (vector<Data>::iterator it = chunkData.begin(); it != chunkData.end(); ++it) {
                 *it = (Data) {0, 0, 0, granularity};
             }
+            chunkData[numberOfChunks - 1].onDiskSize = ex->length - (granularity * (numberOfChunks - 1));
 
             for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) { // record loop
-                // if (r->extentOfs() >= granularity * (currentChunk + 1)) {
-                //     chunkData.appendToBSONObjBuilder(&bChunk);
-                //     bChunkArray.append(bChunk.obj());
-                //     if (showExtents) {
-                //         printStats(out, str::stream() << "extent " << extentNum << ", chunk " << currentChunk, chunkData);
-                //     }
+                // if (showExtents) {
+                //     printStats(out, str::stream() << "extent " << extentNum << ", chunk " << currentChunk, chunkData);
                 // }
                 r = dl.rec();
                 Data& chunk = chunkData.at((dl.getOfs() - ex->myLoc.getOfs()) / granularity);
@@ -276,6 +287,7 @@ public :
             collectionData += extentData;
             extentNum++;
         }
+        DEV log() << " tot num of chunks: " << totNumberOfChunks << endl;
         
         printStats(out, "collection", collectionData);
         BSONObj collObj = bExtentArray.obj();
@@ -350,9 +362,10 @@ public :
             }
         }
 
-        int granularity = getParam("granularity", 2<<20); // 1 MB by default
+        int granularity = getParam("granularity", 1<<20); // 1 MB by default
+        int numChunks = getParam("numChunks", 1000);
 
-        examineCollection(out, nsd, granularity, hasParam("showExtents"));
+        examineCollection(out, nsd, hasParam("numChunks"), granularity, numChunks, hasParam("showExtents"));
 
         return 0;
     }
