@@ -243,13 +243,16 @@ public :
             //     printStats(out, str::stream() << "extent " << extentNum << ", chunk " << currentChunk, chunkData);
             // }
             r = dl.rec();
-            Data& chunk = chunkData.at((dl.getOfs() - ex->myLoc.getOfs() - startOfs) / granularity);
-            chunk.numEntries++;
-            extentData.numEntries++;
-            chunk.recSize += r->lengthWithHeaders();
-            extentData.recSize += r->lengthWithHeaders();
-            chunk.bsonSize += dl.obj().objsize();
-            extentData.bsonSize += dl.obj().objsize();
+            int chunkNum = (dl.getOfs() - ex->myLoc.getOfs() - startOfs) / granularity;
+            if (chunkNum >= 0 && chunkNum < numberOfChunks) {
+                Data& chunk = chunkData.at(chunkNum);
+                chunk.numEntries++;
+                extentData.numEntries++;
+                chunk.recSize += r->lengthWithHeaders();
+                extentData.recSize += r->lengthWithHeaders();
+                chunk.bsonSize += dl.obj().objsize();
+                extentData.bsonSize += dl.obj().objsize();
+            }
         }
         BSONArrayBuilder bChunkArray;
         for (vector<Data>::iterator it = chunkData.begin(); it != chunkData.end(); ++it) {
