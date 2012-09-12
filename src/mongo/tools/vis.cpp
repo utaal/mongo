@@ -177,7 +177,6 @@ public :
                 count++;
                 DeletedRecord *r = dl.drec();
                 totsize += r->lengthWithHeaders();
-                //DiskLoc extLoc(dl.a(), r->extentOfs()); this could be useful if we want blocks by size per extent
                 dl = r->nextDeleted();
             }
             int averageSize = count > 0 ? totsize / count : 0;
@@ -239,7 +238,6 @@ public :
         Data extentData = {0, 0, 0, endOfs - startOfs};
         Record * r;
         int numberOfChunks = (length + granularity - 1) / granularity;
-        //totNumberOfChunks += numberOfChunks;
         DEV log() << "this extent or part of extent (" << length << " long) will be split in "
           << numberOfChunks << " chunks" << endl;
         vector<Data> chunkData(numberOfChunks);
@@ -248,9 +246,6 @@ public :
         }
         chunkData[numberOfChunks - 1].onDiskSize = length - (granularity * (numberOfChunks - 1));
         for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) {
-            // if (showExtents) {
-            //     printStats(out, str::stream() << "extent " << extentNum << ", chunk " << currentChunk, chunkData);
-            // }
             r = dl.rec();
             int chunkNum = (dl.getOfs() - ex->myLoc.getOfs() - startOfs) / granularity;
             if (chunkNum >= 0 && chunkNum < numberOfChunks) {
@@ -269,14 +264,8 @@ public :
             BSONObjBuilder bChunk;
             it->appendToBSONObjBuilder(&bChunk);
             bChunkArray.append(bChunk.obj());
-            // if (showExtents) {
-            //     printStats(out, str::stream() << "extent " << extentNum << ", chunk" << currentChunk, chunkData);
-            // }
         }
 
-        // if (showExtents) {
-        //     printStats(out, str::stream() << "extent number " << extentNum, extentData);
-        // }
         extentData.appendToBSONObjBuilder(bExtent);
         bExtent->append("chunks", bChunkArray.obj());
         return extentData;
