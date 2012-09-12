@@ -221,13 +221,12 @@ public :
         return 0;
     }
 
-    Data __examineExtent(Extent * ex, BSONObjBuilder * bExtent, int granularity, int startOfs, int stopOfs) {
+    Data __examineExtent(Extent * ex, BSONObjBuilder * bExtent, int granularity, int startOfs,
+                         int endOfs) {
         startOfs = (startOfs > 0) ? startOfs : 0;
-        stopOfs = (stopOfs <= ex->length) ? stopOfs : ex->length;
-
-        int length = stopOfs - startOfs;
-        Data extentData = {0, 0, 0, stopOfs - startOfs};
-
+        endOfs = (endOfs <= ex->length) ? endOfs : ex->length;
+        int length = endOfs - startOfs;
+        Data extentData = {0, 0, 0, endOfs - startOfs};
         Record * r;
         int numberOfChunks = (length + granularity - 1) / granularity;
         //totNumberOfChunks += numberOfChunks;
@@ -277,8 +276,13 @@ public :
         return __examineExtent(ex, bExtent, granularity, 0, INT_MAX);
     }
 
-    inline Data examineExtent(Extent * ex, BSONObjBuilder * bExtent, int numChunks, int startOfs, int endOfs) {
-        int granularity = (endOfs - startOfs + numChunks - 1) / numChunks;
+    inline Data examineExtent(Extent * ex, BSONObjBuilder * bExtent, bool useNumChunks,
+                              int granularity, int numChunks, int startOfs, int endOfs) {
+        if (endOfs > ex->length) {
+            endOfs = ex->length;
+        }
+        if (useNumChunks) {
+            granularity = (endOfs - startOfs + numChunks - 1) / numChunks;
         return __examineExtent(ex, bExtent, granularity, startOfs, endOfs);
     }
 
@@ -385,7 +389,27 @@ public :
         int granularity = getParam("granularity", 1<<20); // 1 MB by default
         int numChunks = getParam("numChunks", 1000);
 
-        examineCollection(out, nsd, hasParam("numChunks"), granularity, numChunks, hasParam("showExtents"));
+        if (hasParam("extent")) {
+            int extentNum = getParam("extent", 0);
+            int curExtent;
+            Extent * ex;
+            for (ex = DataFileMgr::getExtent(nsd->firstExtent), curExtent = 0;
+                ex != 0 && curExtent < extentNum;
+                ex = ex->getNextExtent(), ++curExtent) {
+                continue;
+            }
+            if (curExtent != extentNum) {
+                out << "extent " << extentNum << " does not exist";
+                return -1;
+            }
+            BSONObjBuilder bExtent;
+            Data extentData = examineExtent(ex, &bExtent, hasParam("numChunks"), granularity,
+                                            numChunks, 0, INT_MAX);
+            out << "BSON " << bExtent.obj().jsonString() << endl;
+        } else {
+            examineCollection(out, nsd, hasParam("numChunks"), granularity, numChunks,
+                              hasParam("showExtents"));
+        }
 
         return 0;
     }
