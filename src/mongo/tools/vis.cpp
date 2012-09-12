@@ -77,11 +77,11 @@ public :
         }
 
         /** Note: ownership is retained by the caller */
-        void appendToBSONObjBuilder(BSONObjBuilder* b) const {
-            b->append("numEntries", numEntries);
-            b->append("bsonSize", bsonSize);
-            b->append("recSize", recSize);
-            b->append("onDiskSize", onDiskSize);
+        void appendToBSONObjBuilder(BSONObjBuilder& b) const {
+            b.append("numEntries", numEntries);
+            b.append("bsonSize", bsonSize);
+            b.append("recSize", recSize);
+            b.append("onDiskSize", onDiskSize);
         }
     };
 
@@ -173,9 +173,8 @@ public :
     /**
      * Print out the number of free records bucketed per size.
      */
-    int freeRecords(ostream& out, ofstream& jsonOut, NamespaceDetails const * const nsd) {
+    int freeRecords(ostream& out, ostream* jsonOut, NamespaceDetails const * const nsd) {
         // TODO(andrea.lattuada): modify behaviour when referring to capped collections
-        // TODO(andrea.lattuada): output a proper json array
         // (see NamespaceDetails::deletedList)
         for (int i = 0; i < mongo::Buckets; i++) {
             DiskLoc dl = nsd->deletedList[i];
@@ -190,14 +189,14 @@ public :
             }
             int averageSize = count > 0 ? totsize / count : 0;
             out << count << " records, average size " << averageSize << endl;
-            if (jsonOut.is_open()) {
+            if (jsonOut != NULL) {
                 BSONObjBuilder b;
                 b.append("bucket", i);
                 b.append("bucketSize", bucketSizes[i]);
                 b.append("count", count);
                 b.append("totsize", (int) totsize);
                 BSONObj bson = b.obj();
-                jsonOut << bson.jsonString() << endl;
+                *jsonOut << bson.jsonString() << endl;
             }
         }
         return 0;
@@ -240,7 +239,7 @@ public :
     /**
      * Note: should not be called directly. Use one of the examineExtent overloads.
      */
-    Data examineExtentInternal(Extent * ex, BSONObjBuilder* extentBuilder, int granularity,
+    Data examineExtentInternal(const Extent * ex, BSONObjBuilder& extentBuilder, int granularity,
                                int startOfs, int endOfs) {
         startOfs = (startOfs > 0) ? startOfs : 0;
         endOfs = (endOfs <= ex->length) ? endOfs : ex->length;
@@ -250,10 +249,7 @@ public :
         int numberOfChunks = (length + granularity - 1) / granularity;
         DEV log() << "this extent or part of extent (" << length << " long) will be split in "
           << numberOfChunks << " chunks" << endl;
-        vector<Data> chunkData(numberOfChunks);
-        for (vector<Data>::iterator it = chunkData.begin(); it != chunkData.end(); ++it) {
-            *it = (Data) {0, 0, 0, granularity};
-        }
+        vector<Data> chunkData(numberOfChunks, (Data) {0, 0, 0, granularity});
         chunkData[numberOfChunks - 1].onDiskSize = length - (granularity * (numberOfChunks - 1));
         for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) {
             r = dl.rec();
@@ -268,13 +264,13 @@ public :
                 extentData.bsonSize += dl.obj().objsize();
             }
         }
-        BSONArrayBuilder bChunkArray (extentBuilder->subarrayStart("chunks"));
+        BSONArrayBuilder chunkArrayBuilder (extentBuilder.subarrayStart("chunks"));
         for (vector<Data>::iterator it = chunkData.begin(); it != chunkData.end(); ++it) {
-            BSONObjBuilder bChunk;
-            it->appendToBSONObjBuilder(&bChunk);
-            bChunkArray.append(bChunk.obj());
+            BSONObjBuilder chunkBuilder;
+            it->appendToBSONObjBuilder(chunkBuilder);
+            chunkArrayBuilder.append(chunkBuilder.obj());
         }
-        bChunkArray.done();
+        chunkArrayBuilder.done();
         extentData.appendToBSONObjBuilder(extentBuilder);
         return extentData;
     }
@@ -284,7 +280,7 @@ public :
      * @param granularity size of the chunks the extent should be split into for analysis
      * @return aggregate data related to the entire extent
      */
-    inline Data examineExtent(Extent * ex, BSONObjBuilder * extentBuilder, int granularity) {
+    inline Data examineExtent(const Extent * ex, BSONObjBuilder& extentBuilder, int granularity) {
         return examineExtentInternal(ex, extentBuilder, granularity, 0, INT_MAX);
     }
 
@@ -296,7 +292,7 @@ public :
      * @param numChunks number of chunks this part of extent should be split into
      * @return aggregate data related to the part of extent requested
      */
-    inline Data examineExtent(Extent * ex, BSONObjBuilder * extentBuilder, bool useNumChunks,
+    inline Data examineExtent(const Extent * ex, BSONObjBuilder& extentBuilder, bool useNumChunks,
                               int granularity, int numChunks, int startOfs, int endOfs) {
         if (endOfs > ex->length) {
             endOfs = ex->length;
@@ -314,7 +310,7 @@ public :
      * @param granularity size of the chunks the namespace extents should be split into
      * @param numChunks number of chunks in which the namespace extents should be split into
      */
-    Data examineCollection(ostream& out, ofstream& jsonOut, NamespaceDetails * nsd,
+    Data examineCollection(ostream& out, ofstream* jsonOut, NamespaceDetails* nsd,
                            bool useNumChunks, int granularity, int numChunks, bool showExtents) {
         int extentNum = 0;
         BSONObjBuilder collectionBuilder;
@@ -338,7 +334,7 @@ public :
              ex != 0;
              ex = ex->getNextExtent(), ++curExtent) {
             BSONObjBuilder extentBuilder (extentArrayBuilder.subobjStart());
-            Data extentData = examineExtent(ex, &extentBuilder, granularity);
+            Data extentData = examineExtent(ex, extentBuilder, granularity);
             extentBuilder.done();
             if (showExtents) {
                 printStats(out, str::stream() << "extent " << curExtent, extentData);
@@ -348,15 +344,14 @@ public :
         }
         extentArrayBuilder.done();
 
-        if (jsonOut.is_open()) {
-            jsonOut << collectionBuilder.obj().jsonString() << endl;
+        if (jsonOut != NULL) {
+            *jsonOut << collectionBuilder.obj().jsonString() << endl;
         }
         return collectionData;
     }
 
     int run() {
         string ns;
-        // TODO(andrea.lattuada) what does this mean? Matt: "allow out to be things from STDOUT"
         ostream& out = cout;
 
         if (!hasParam("dbpath")) {
@@ -368,9 +363,10 @@ public :
         string dbname = getParam ("db");
         Client::ReadContext cx (dbname);
 
-        ofstream jsonOut;
+        scoped_ptr<ofstream> jsonOut (NULL);
         if (hasParam("jsonOut")) {
-            jsonOut.open(getParam("jsonOut").c_str(), ios_base::trunc);
+            jsonOut.reset(new ofstream);
+            jsonOut->open(getParam("jsonOut").c_str(), ios_base::trunc);
         }
 
         if (hasParam("namespaces")) {
@@ -405,7 +401,7 @@ public :
 
         // --freeRecords
         if (hasParam("freeRecords")) {
-            if (freeRecords(out, jsonOut, nsd) == 0) {
+            if (freeRecords(out, jsonOut.get(), nsd) == 0) {
                 return 0;
             }
             else {
@@ -447,20 +443,20 @@ public :
                 return -1;
             }
             BSONObjBuilder extentBuilder;
-            Data extentData = examineExtent(ex, &extentBuilder, hasParam("numChunks"), granularity,
+            Data extentData = examineExtent(ex, extentBuilder, hasParam("numChunks"), granularity,
                                             numChunks, getParam("ofsFrom", 0),
                                             getParam("ofsTo", INT_MAX));
             printStats(out, str::stream() << "extent " << extentNum, extentData);
-            if (jsonOut.is_open()) {
-                jsonOut << extentBuilder.obj().jsonString() << endl;
+            if (jsonOut != NULL) {
+                *jsonOut << extentBuilder.obj().jsonString() << endl;
             }
             return 0;
         }
 
         // otherwise (no specific options)
         {
-            Data collData = examineCollection(out, jsonOut, nsd, hasParam("numChunks"), granularity,
-                                              numChunks, hasParam("showExtents"));
+            Data collData = examineCollection(out, jsonOut.get(), nsd, hasParam("numChunks"),
+                                              granularity, numChunks, hasParam("showExtents"));
             printStats(out, "collection", collData);
         }
         return 0;
