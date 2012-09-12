@@ -18,7 +18,10 @@
 
 #include "mongo/pch.h"
 
+#include <fstream>
 #include <iostream>
+#include <list>
+#include <string>
 
 #include <boost/filesystem/convenience.hpp>
 #include <boost/filesystem/operations.hpp>
@@ -41,6 +44,7 @@ public :
         ("freeRecords", "report number of free records of each size")
         ("granularity", po::value<int>(),
          "granularity in bytes for the detailed space usage reports")
+        ("jsonOut", po::value<string>(), "where to write the detailed json report")
         ("namespaces", "loop over all namespace to find an map of namespaces over extents on disk")
         ("numChunks", po::value<int>(),
          "number of chunks the namespace should be split into for deltailed usage reports")
@@ -82,12 +86,9 @@ public :
     };
 
     virtual void preSetup() {
-        string out = getParam("out");
-        if (out == "-") {
-            // write output to standard error to avoid mangling output
-            // must happen early to avoid sending junk to stdout
-            useStandardOutput(false);
-        }
+        // write output to standard error to avoid mangling output
+        // must happen early to avoid sending junk to stdout
+        useStandardOutput(false);
     }
 
     virtual void printExtraHelp(ostream& out) {
@@ -164,7 +165,7 @@ public :
     /**
      * Print out the number of free records bucketed per size.
      */
-    int freeRecords(ostream& out, NamespaceDetails const * const nsd) {
+    int freeRecords(ostream& out, ofstream& jsonOut, NamespaceDetails const * const nsd) {
         // TODO(andrea.lattuada): modify behaviour when referring to capped collections
         // (see NamespaceDetails::deletedList)
         for (int i = 0; i < mongo::Buckets; i++) {
@@ -180,14 +181,16 @@ public :
                 dl = r->nextDeleted();
             }
             int averageSize = count > 0 ? totsize / count : 0;
-            BSONObjBuilder b;
-            b.append("bucket", i);
-            b.append("bucketSize", bucketSizes[i]);
-            b.append("count", count);
-            b.append("totsize", totsize);
-            BSONObj bson = b.obj();
             out << count << " records, average size " << averageSize << endl;
-            out << "BSON " << bson.toString() << endl;
+            if (jsonOut.is_open()) {
+                BSONObjBuilder b;
+                b.append("bucket", i);
+                b.append("bucketSize", bucketSizes[i]);
+                b.append("count", count);
+                b.append("totsize", (int) totsize);
+                BSONObj bson = b.obj();
+                out << bson.toString() << endl;
+            }
         }
         return 0;
     }
@@ -203,17 +206,14 @@ public :
         for (list<string>::iterator itr = namespaces.begin(); itr != namespaces.end(); itr++) {
             out << "----------------------------------\n" << "namespace " << *itr << ':' << endl;
             NamespaceDetails * nsd = nsdetails(itr->c_str());
-
             if (nsd->firstExtent.isNull()) {
                 out << "ERROR: firstExtent is null" << endl;
                 return -1;
             }
-
             if (!nsd->firstExtent.isValid()) {
                 out << "ERROR: firstExtent is invalid" << endl;
                 return -1;
             }
-
             int extentNum = 0;
             for (Extent * ex = DataFileMgr::getExtent(nsd->firstExtent);
                  ex != 0;
@@ -317,8 +317,8 @@ public :
      * @param granularity size of the chunks the namespace extents should be split into
      * @param numChunks number of chunks in which the namespace extents should be split into
      */
-    void examineCollection(ostream& out, NamespaceDetails * nsd, bool useNumChunks, int granularity,
-                           int numChunks, bool showExtents) {
+    Data examineCollection(ostream& out, ofstream& jsonOut, NamespaceDetails * nsd,
+                           bool useNumChunks, int granularity, int numChunks, bool showExtents) {
         int extentNum = 0;
         BSONArrayBuilder bExtentArray;
         Data collectionData = {0, 0, 0, 0};
@@ -335,18 +335,25 @@ public :
             DEV log() << "granularity will be " << granularity << endl;
         }
         //int totNumberOfChunks = 0;
+        int curExtent = 0;
         for (Extent * ex = DataFileMgr::getExtent(nsd->firstExtent);
              ex != 0;
-             ex = ex->getNextExtent()) { // extent loop
+             ex = ex->getNextExtent(), ++curExtent) {
             BSONObjBuilder bExtent;
-            collectionData += examineExtent(ex, &bExtent, granularity);
+            Data extentData = examineExtent(ex, &bExtent, granularity);
+            if (showExtents) {
+                printStats(out, str::stream() << "extent " << curExtent, extentData);
+            }
+            collectionData += extentData;
             bExtentArray.append(bExtent.obj());
             extentNum++;
         }
         //DEV log() << " tot num of chunks: " << totNumberOfChunks << endl;
-        printStats(out, "collection", collectionData);
         BSONObj collObj = bExtentArray.obj();
-        out << "BSON " << collObj.jsonString() << endl;
+        if (jsonOut.is_open()) {
+            jsonOut << collObj.jsonString() << endl;
+        }
+        return collectionData;
     }
 
     int run() {
@@ -362,6 +369,11 @@ public :
         // TODO(dannenberg.matt) other safety checks and possibly checks for other connection types
         string dbname = getParam ("db");
         Client::ReadContext cx (dbname);
+
+        ofstream jsonOut;
+        if (hasParam("jsonOut")) {
+            jsonOut.open(getParam("jsonOut").c_str(), ios_base::trunc);
+        }
 
         if (hasParam("namespaces")) {
             if (crawlNamespaces(out, dbname) == 0) {
@@ -395,7 +407,7 @@ public :
 
         // --freeRecords
         if (hasParam("freeRecords")) {
-            if (freeRecords(out, nsd) == 0) {
+            if (freeRecords(out, jsonOut, nsd) == 0) {
                 return 0;
             }
             else {
@@ -425,8 +437,10 @@ public :
             int extentNum = getParam("extent", 0);
             int curExtent;
             Extent * ex;
+            //TODO(andrea.lattuada) it looks like looping is not stopped when the last available
+            //                      extent is reached
             for (ex = DataFileMgr::getExtent(nsd->firstExtent), curExtent = 0;
-                ex != 0 && curExtent < extentNum;
+                ex != NULL && curExtent < extentNum;
                 ex = ex->getNextExtent(), ++curExtent) {
                 continue;
             }
@@ -436,15 +450,20 @@ public :
             }
             BSONObjBuilder bExtent;
             Data extentData = examineExtent(ex, &bExtent, hasParam("numChunks"), granularity,
-                                            numChunks, 0, INT_MAX);
-            out << "BSON " << bExtent.obj().jsonString() << endl;
+                                            numChunks, getParam("ofsFrom", 0),
+                                            getParam("ofsTo", INT_MAX));
+            printStats(out, str::stream() << "extent " << extentNum, extentData);
+            if (jsonOut.is_open()) {
+                jsonOut << bExtent.obj().jsonString() << endl;
+            }
             return 0;
         }
 
         // otherwise (no specific options)
         {
-            examineCollection(out, nsd, hasParam("numChunks"), granularity, numChunks,
-                              hasParam("showExtents"));
+            Data collData = examineCollection(out, jsonOut, nsd, hasParam("numChunks"), granularity,
+                                              numChunks, hasParam("showExtents"));
+            printStats(out, "collection", collData);
         }
         return 0;
     }
