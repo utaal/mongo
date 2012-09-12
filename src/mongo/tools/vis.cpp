@@ -136,12 +136,14 @@ public :
                 return -1;
             }
         }
+
         set<DiskLoc> dls;
         DEV log() << "extent contents:" << endl;
         for (DiskLoc dl = ex->firstRecord; !dl.isNull(); dl = dl.rec()->nextInExtent(dl)) {
             DEV log() << dl.toString() << endl;
             dls.insert(dl);
         }
+
         set<DiskLoc>::iterator it;
         DEV log() << "set contents:" << endl;
         DiskLoc prev = DiskLoc();
@@ -159,6 +161,7 @@ public :
             DEV log() << cur.toString() << endl;
         }
         getDur().writingInt(cur.rec()->np()->nextOfs) = DiskLoc::NullOfs;
+
         // TODO(dannenberg.matt) result loop to see if its ordered now only valuable for debugging
         DEV log() << "resulting extent contents:" << endl;
         for (DiskLoc dl = ex->firstRecord; !dl.isNull(); dl = dl.rec()->nextInExtent(dl)) {
@@ -172,6 +175,7 @@ public :
      */
     int freeRecords(ostream& out, ofstream& jsonOut, NamespaceDetails const * const nsd) {
         // TODO(andrea.lattuada): modify behaviour when referring to capped collections
+        // TODO(andrea.lattuada): output a proper json array
         // (see NamespaceDetails::deletedList)
         for (int i = 0; i < mongo::Buckets; i++) {
             DiskLoc dl = nsd->deletedList[i];
@@ -202,6 +206,7 @@ public :
     /**
      * Print out all the namespaces in the database and general information about the extents they
      * refer to.
+     * @param out output stream for aggregate, human readable info
      */
     int crawlNamespaces(ostream& out, string ns) {
         NamespaceIndex * nsi = nsindex(ns.c_str());
@@ -235,8 +240,8 @@ public :
     /**
      * Note: should not be called directly. Use one of the examineExtent overloads.
      */
-    Data __examineExtent(Extent * ex, BSONObjBuilder * bExtent, int granularity, int startOfs,
-                         int endOfs) {
+    Data examineExtentInternal(Extent * ex, BSONObjBuilder* extentBuilder, int granularity,
+                               int startOfs, int endOfs) {
         startOfs = (startOfs > 0) ? startOfs : 0;
         endOfs = (endOfs <= ex->length) ? endOfs : ex->length;
         int length = endOfs - startOfs;
@@ -271,8 +276,8 @@ public :
             bChunkArray.append(bChunk.obj());
         }
 
-        extentData.appendToBSONObjBuilder(bExtent);
         bExtent->append("chunks", bChunkArray.obj());
+        extentData.appendToBSONObjBuilder(extentBuilder);
         return extentData;
     }
 
@@ -281,8 +286,8 @@ public :
      * @param granularity size of the chunks the extent should be split into for analysis
      * @return aggregate data related to the entire extent
      */
-    inline Data examineExtent(Extent * ex, BSONObjBuilder * bExtent, int granularity) {
-        return __examineExtent(ex, bExtent, granularity, 0, INT_MAX);
+    inline Data examineExtent(Extent * ex, BSONObjBuilder * extentBuilder, int granularity) {
+        return examineExtentInternal(ex, extentBuilder, granularity, 0, INT_MAX);
     }
 
     /**
@@ -293,7 +298,7 @@ public :
      * @param numChunks number of chunks this part of extent should be split into
      * @return aggregate data related to the part of extent requested
      */
-    inline Data examineExtent(Extent * ex, BSONObjBuilder * bExtent, bool useNumChunks,
+    inline Data examineExtent(Extent * ex, BSONObjBuilder * extentBuilder, bool useNumChunks,
                               int granularity, int numChunks, int startOfs, int endOfs) {
         if (endOfs > ex->length) {
             endOfs = ex->length;
@@ -301,7 +306,7 @@ public :
         if (useNumChunks) {
             granularity = (endOfs - startOfs + numChunks - 1) / numChunks;
         }
-        return __examineExtent(ex, bExtent, granularity, startOfs, endOfs);
+        return examineExtentInternal(ex, extentBuilder, granularity, startOfs, endOfs);
     }
 
     /**
@@ -443,7 +448,7 @@ public :
                 return -1;
             }
             BSONObjBuilder bExtent;
-            Data extentData = examineExtent(ex, &bExtent, hasParam("numChunks"), granularity,
+            Data extentData = examineExtent(ex, &extentBuilder, hasParam("numChunks"), granularity,
                                             numChunks, getParam("ofsFrom", 0),
                                             getParam("ofsTo", INT_MAX));
             printStats(out, str::stream() << "extent " << extentNum, extentData);
