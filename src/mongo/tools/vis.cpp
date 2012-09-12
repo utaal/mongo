@@ -105,12 +105,17 @@ public :
             << "\n\tnumber of records: " << data.numEntries
             << "\n\tsize used by records: " << data.recSize
             << "\n\tfree by records: " << data.onDiskSize - data.recSize
-            << "\n\t% of " << name << " used: " << (float)data.recSize / (float)data.onDiskSize * 100
-            << "\n\taverage record size: " << (data.numEntries > 0 ? data.recSize / data.numEntries : 0)
+            << "\n\t% of " << name << " used: "
+            << (float)data.recSize / (float)data.onDiskSize * 100
+            << "\n\taverage record size: "
+            << (data.numEntries > 0 ? data.recSize / data.numEntries : 0)
             << "\n\tsize used by BSONObjs: " << data.bsonSize
-            << "\n\tfree by BSON calc: " << data.onDiskSize - data.bsonSize - 16 * data.numEntries
-            << "\n\t% of " << name << " used (BSON): " << (float)data.bsonSize / (float)data.onDiskSize * 100
-            << "\n\taverage BSONObj size: " << (data.numEntries > 0 ? data.bsonSize / data.numEntries : 0)
+            << "\n\tfree by BSON calc: "
+            << data.onDiskSize - data.bsonSize - 16 * data.numEntries
+            << "\n\t% of " << name << " used (BSON): "
+            << (float)data.bsonSize / (float)data.onDiskSize * 100
+            << "\n\taverage BSONObj size: "
+            << (data.numEntries > 0 ? data.bsonSize / data.numEntries : 0)
             << endl;
     }
 
