@@ -197,7 +197,7 @@ public :
                 b.append("count", count);
                 b.append("totsize", (int) totsize);
                 BSONObj bson = b.obj();
-                out << bson.toString() << endl;
+                jsonOut << bson.jsonString() << endl;
             }
         }
         return 0;
@@ -268,15 +268,13 @@ public :
                 extentData.bsonSize += dl.obj().objsize();
             }
         }
-
-        BSONArrayBuilder bChunkArray;
+        BSONArrayBuilder bChunkArray (extentBuilder->subarrayStart("chunks"));
         for (vector<Data>::iterator it = chunkData.begin(); it != chunkData.end(); ++it) {
             BSONObjBuilder bChunk;
             it->appendToBSONObjBuilder(&bChunk);
             bChunkArray.append(bChunk.obj());
         }
-
-        bExtent->append("chunks", bChunkArray.obj());
+        bChunkArray.done();
         extentData.appendToBSONObjBuilder(extentBuilder);
         return extentData;
     }
@@ -319,7 +317,8 @@ public :
     Data examineCollection(ostream& out, ofstream& jsonOut, NamespaceDetails * nsd,
                            bool useNumChunks, int granularity, int numChunks, bool showExtents) {
         int extentNum = 0;
-        BSONArrayBuilder bExtentArray;
+        BSONObjBuilder collectionBuilder;
+        BSONArrayBuilder extentArrayBuilder (collectionBuilder.subarrayStart("extents"));
         Data collectionData = {0, 0, 0, 0};
         if (useNumChunks) {
             int totsize = 0;
@@ -333,24 +332,24 @@ public :
             granularity = (totsize + (numChunks - count - 1)) / (numChunks - count);
             DEV log() << "granularity will be " << granularity << endl;
         }
-        //int totNumberOfChunks = 0;
+
         int curExtent = 0;
         for (Extent * ex = DataFileMgr::getExtent(nsd->firstExtent);
              ex != 0;
              ex = ex->getNextExtent(), ++curExtent) {
-            BSONObjBuilder bExtent;
-            Data extentData = examineExtent(ex, &bExtent, granularity);
+            BSONObjBuilder extentBuilder (extentArrayBuilder.subobjStart());
+            Data extentData = examineExtent(ex, &extentBuilder, granularity);
+            extentBuilder.done();
             if (showExtents) {
                 printStats(out, str::stream() << "extent " << curExtent, extentData);
             }
             collectionData += extentData;
-            bExtentArray.append(bExtent.obj());
             extentNum++;
         }
-        //DEV log() << " tot num of chunks: " << totNumberOfChunks << endl;
-        BSONObj collObj = bExtentArray.obj();
+        extentArrayBuilder.done();
+
         if (jsonOut.is_open()) {
-            jsonOut << collObj.jsonString() << endl;
+            jsonOut << collectionBuilder.obj().jsonString() << endl;
         }
         return collectionData;
     }
@@ -439,21 +438,21 @@ public :
             //TODO(andrea.lattuada) it looks like looping is not stopped when the last available
             //                      extent is reached
             for (ex = DataFileMgr::getExtent(nsd->firstExtent), curExtent = 0;
-                ex != NULL && curExtent < extentNum;
-                ex = ex->getNextExtent(), ++curExtent) {
+                 ex != NULL && curExtent < extentNum;
+                 ex = ex->getNextExtent(), ++curExtent) {
                 continue;
             }
             if (curExtent != extentNum) {
                 out << "extent " << extentNum << " does not exist";
                 return -1;
             }
-            BSONObjBuilder bExtent;
+            BSONObjBuilder extentBuilder;
             Data extentData = examineExtent(ex, &extentBuilder, hasParam("numChunks"), granularity,
                                             numChunks, getParam("ofsFrom", 0),
                                             getParam("ofsTo", INT_MAX));
             printStats(out, str::stream() << "extent " << extentNum, extentData);
             if (jsonOut.is_open()) {
-                jsonOut << bExtent.obj().jsonString() << endl;
+                jsonOut << extentBuilder.obj().jsonString() << endl;
             }
             return 0;
         }
