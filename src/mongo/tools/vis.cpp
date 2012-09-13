@@ -251,17 +251,40 @@ public :
           << numberOfChunks << " chunks" << endl;
         vector<Data> chunkData(numberOfChunks, (Data) {0, 0, 0, granularity});
         chunkData[numberOfChunks - 1].onDiskSize = length - (granularity * (numberOfChunks - 1));
+        //TODO(andrea.lattuada) refactor?
         for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) {
             r = dl.rec();
             int chunkNum = (dl.getOfs() - ex->myLoc.getOfs() - startOfs) / granularity;
+            int endOfChunk = (chunkNum + 1) * granularity + startOfs + ex->myLoc.getOfs() - 1;
+            int leftInChunk = endOfChunk - dl.getOfs();
+            //TODO(andrea.lattuada) accout for records overlapping the beginning of chunk boundary
+            //TODO(andrea.lattuada) count partial records for numEntries
             if (chunkNum >= 0 && chunkNum < numberOfChunks) {
                 Data& chunk = chunkData.at(chunkNum);
                 chunk.numEntries++;
                 extentData.numEntries++;
-                chunk.recSize += r->lengthWithHeaders();
-                extentData.recSize += r->lengthWithHeaders();
-                chunk.bsonSize += dl.obj().objsize();
-                extentData.bsonSize += dl.obj().objsize();
+                int recSize = r->lengthWithHeaders();
+                int exceedsChunkBy = r->lengthWithHeaders() - leftInChunk;
+                int bsonSize = dl.obj().objsize();
+                if (exceedsChunkBy <= 0) {
+                    chunk.recSize += recSize;
+                    extentData.recSize += recSize;
+                    chunk.bsonSize += bsonSize;
+                    extentData.bsonSize += bsonSize;
+                } else { // record overlaps the end of chunk boundary
+                    chunk.recSize += leftInChunk;
+                    extentData.recSize += leftInChunk;
+                    int bsonSizeAccountingHere = ((double) leftInChunk / recSize) * bsonSize;
+                    chunk.bsonSize += bsonSizeAccountingHere;
+                    extentData.bsonSize += bsonSizeAccountingHere;
+                    if (chunkNum + 1 < numberOfChunks) {
+                        Data& nextChunk = chunkData.at(chunkNum + 1);
+                        nextChunk.recSize += exceedsChunkBy;
+                        nextChunk.bsonSize += bsonSize - bsonSizeAccountingHere;
+                        extentData.recSize += exceedsChunkBy;
+                        extentData.bsonSize += bsonSize - bsonSizeAccountingHere;
+                    }
+                }
             }
         }
         BSONArrayBuilder chunkArrayBuilder (extentBuilder.subarrayStart("chunks"));
