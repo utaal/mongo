@@ -64,6 +64,12 @@ public :
         long long bsonSize;
         long long recSize;
         long long onDiskSize;
+        double charactSum;
+        long long charactCount;
+
+        Data(long long diskSize) : numEntries(0), bsonSize(0), recSize(0), onDiskSize(diskSize),
+                                   charactSum(0), charactCount(0) {
+        }
 
         const Data operator += (const Data &rhs) {
             Data result = *this;
@@ -72,6 +78,8 @@ public :
             this->recSize += rhs.recSize;
             this->bsonSize += rhs.bsonSize;
             this->onDiskSize += rhs.onDiskSize;
+            this->charactSum += rhs.charactSum;
+            this->charactCount += rhs.charactCount;
 
             return result;
         }
@@ -116,6 +124,8 @@ public :
             << (float)data.bsonSize / (float)data.onDiskSize * 100
             << "\n\taverage BSONObj size: "
             << (data.numEntries > 0 ? data.bsonSize / data.numEntries : 0)
+            << "\n\taverage object characteristic value: "
+            << (data.charactCount > 0 ? data.charactSum / data.charactCount : 0)
             << endl;
     }
 
@@ -244,12 +254,12 @@ public :
         startOfs = (startOfs > 0) ? startOfs : 0;
         endOfs = (endOfs <= ex->length) ? endOfs : ex->length;
         int length = endOfs - startOfs;
-        Data extentData = {0, 0, 0, endOfs - startOfs};
+        Data extentData(endOfs - startOfs);
         Record * r;
         int numberOfChunks = (length + granularity - 1) / granularity;
         DEV log() << "this extent or part of extent (" << length << " long) will be split in "
           << numberOfChunks << " chunks" << endl;
-        vector<Data> chunkData(numberOfChunks, (Data) {0, 0, 0, granularity});
+        vector<Data> chunkData(numberOfChunks, Data(granularity));
         chunkData[numberOfChunks - 1].onDiskSize = length - (granularity * (numberOfChunks - 1));
         //TODO(andrea.lattuada) refactor?
         for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) {
@@ -338,7 +348,7 @@ public :
         int extentNum = 0;
         BSONObjBuilder collectionBuilder;
         BSONArrayBuilder extentArrayBuilder (collectionBuilder.subarrayStart("extents"));
-        Data collectionData = {0, 0, 0, 0};
+        Data collectionData(0);
         if (useNumChunks) {
             int totsize = 0;
             int count = 0;
