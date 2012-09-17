@@ -18,6 +18,7 @@
 
 #include "mongo/pch.h"
 
+#include <ctime>
 #include <fstream>
 #include <iostream>
 #include <list>
@@ -35,6 +36,7 @@
 using namespace mongo;
 
 namespace po = boost::program_options;
+time_t now = time(NULL);
 
 class Vis : public Tool {
 public :
@@ -48,6 +50,10 @@ public :
         ("namespaces", "loop over all namespace to find an map of namespaces over extents on disk")
         ("numChunks", po::value<int>(),
          "number of chunks the namespace should be split into for deltailed usage reports")
+        ("charactField", po::value<string>(),
+         "a dotted notation path to a numeric field that characterized documents")
+        ("objIdAsCharactField",
+         "use the timestamp in the object-id to characterise the document")
         ("ofsFrom", po::value<int>(), "first offset inside the extent to analyze")
         ("ofsTo", po::value<int>(), "offset after the last one to analyze")
         ("orderExtent,e", po::value<int>(),
@@ -90,6 +96,10 @@ public :
             b.append("bsonSize", bsonSize);
             b.append("recSize", recSize);
             b.append("onDiskSize", onDiskSize);
+            if (charactCount > 0) {
+                b.append("charactSum", charactSum);
+                b.append("charactCount", charactCount);
+            }
         }
     };
 
@@ -123,10 +133,12 @@ public :
             << "\n\t% of " << name << " used (BSON): "
             << (float)data.bsonSize / (float)data.onDiskSize * 100
             << "\n\taverage BSONObj size: "
-            << (data.numEntries > 0 ? data.bsonSize / data.numEntries : 0)
-            << "\n\taverage object characteristic value: "
-            << (data.charactCount > 0 ? data.charactSum / data.charactCount : 0)
-            << endl;
+            << (data.numEntries > 0 ? data.bsonSize / data.numEntries : 0);
+        if (data.charactCount > 0) {
+            out << "\n\taverage object characteristic value: "
+                << (data.charactCount > 0 ? data.charactSum / data.charactCount : 0);
+        }
+        out << endl;
     }
 
     /**
@@ -249,8 +261,9 @@ public :
     /**
      * Note: should not be called directly. Use one of the examineExtent overloads.
      */
-    Data examineExtentInternal(const Extent * ex, BSONObjBuilder& extentBuilder, int granularity,
-                               int startOfs, int endOfs) {
+    Data examineExtentInternal(const Extent* ex, BSONObjBuilder& extentBuilder, int granularity,
+                               int startOfs, int endOfs, const string* charactField,
+                               bool charactFieldIsObjId) {
         startOfs = (startOfs > 0) ? startOfs : 0;
         endOfs = (endOfs <= ex->length) ? endOfs : ex->length;
         int length = endOfs - startOfs;
@@ -275,7 +288,32 @@ public :
                 extentData.numEntries++;
                 int recSize = r->lengthWithHeaders();
                 int exceedsChunkBy = r->lengthWithHeaders() - leftInChunk;
-                int bsonSize = dl.obj().objsize();
+                BSONObj obj = dl.obj();
+                int bsonSize = obj.objsize();
+                //TODO(andrea.lattuada) factor out as a separate method
+                if (charactField != NULL) {
+                    BSONElement elem = obj.getFieldDotted(*charactField);
+                    if (!elem.eoo()) {
+                        bool hasval = false;
+                        int val = INT_MIN;
+                        if (charactFieldIsObjId) {
+                            OID oid = elem.OID();
+                            val = now - oid.asTimeT();
+                            hasval = true;
+                        }
+                        else if (elem.isNumber()) {
+                            val = elem.numberDouble();
+                            hasval = true;
+                        }
+
+                        if (hasval) {
+                            chunk.charactSum += val;
+                            chunk.charactCount += 1;
+                            extentData.charactSum += val;
+                            extentData.charactCount += 1;
+                        }
+                    }
+                }
                 if (exceedsChunkBy <= 0) {
                     chunk.recSize += recSize;
                     extentData.recSize += recSize;
@@ -313,8 +351,10 @@ public :
      * @param granularity size of the chunks the extent should be split into for analysis
      * @return aggregate data related to the entire extent
      */
-    inline Data examineExtent(const Extent * ex, BSONObjBuilder& extentBuilder, int granularity) {
-        return examineExtentInternal(ex, extentBuilder, granularity, 0, INT_MAX);
+    inline Data examineExtent(const Extent* ex, BSONObjBuilder& extentBuilder, int granularity,
+                              const string* charactField, bool charactFieldIsObjId) {
+        return examineExtentInternal(ex, extentBuilder, granularity, 0, INT_MAX, charactField,
+                                     charactFieldIsObjId);
     }
 
     /**
@@ -325,15 +365,17 @@ public :
      * @param numChunks number of chunks this part of extent should be split into
      * @return aggregate data related to the part of extent requested
      */
-    inline Data examineExtent(const Extent * ex, BSONObjBuilder& extentBuilder, bool useNumChunks,
-                              int granularity, int numChunks, int startOfs, int endOfs) {
+    inline Data examineExtent(const Extent* ex, BSONObjBuilder& extentBuilder, bool useNumChunks,
+                              int granularity, int numChunks, int startOfs, int endOfs,
+                              const string* charactField, bool charactFieldIsObjId) {
         if (endOfs > ex->length) {
             endOfs = ex->length;
         }
         if (useNumChunks) {
             granularity = (endOfs - startOfs + numChunks - 1) / numChunks;
         }
-        return examineExtentInternal(ex, extentBuilder, granularity, startOfs, endOfs);
+        return examineExtentInternal(ex, extentBuilder, granularity, startOfs, endOfs, charactField,
+                                     charactFieldIsObjId);
     }
 
     /**
@@ -344,7 +386,8 @@ public :
      * @param numChunks number of chunks in which the namespace extents should be split into
      */
     Data examineCollection(ostream& out, ofstream* jsonOut, NamespaceDetails* nsd,
-                           bool useNumChunks, int granularity, int numChunks, bool showExtents) {
+                           bool useNumChunks, int granularity, int numChunks, bool showExtents,
+                           const string* charactField, bool charactFieldIsObjId) {
         int extentNum = 0;
         BSONObjBuilder collectionBuilder;
         BSONArrayBuilder extentArrayBuilder (collectionBuilder.subarrayStart("extents"));
@@ -367,7 +410,8 @@ public :
              ex != 0;
              ex = ex->getNextExtent(), ++curExtent) {
             BSONObjBuilder extentBuilder (extentArrayBuilder.subobjStart());
-            Data extentData = examineExtent(ex, extentBuilder, granularity);
+            Data extentData = examineExtent(ex, extentBuilder, granularity, charactField,
+                                            charactFieldIsObjId);
             extentBuilder.done();
             if (showExtents) {
                 printStats(out, str::stream() << "extent " << curExtent, extentData);
@@ -459,6 +503,17 @@ public :
         int granularity = getParam("granularity", 1<<20); // 1 MB by default
         int numChunks = getParam("numChunks", 1000);
 
+        bool charactFieldIsObjId = false;
+        scoped_ptr<string> charactField(NULL);
+        if (hasParam("objIdAsCharactField")) {
+            charactFieldIsObjId = true;
+            charactField.reset(new string("_id"));
+        }
+        else if (hasParam("charactField")) {
+            charactField.reset(new string(getParam("charactField")));
+            DEV log() << "using characteristic record field " << *charactField << endl;
+        }
+
         // --extent num
         if (hasParam("extent")) {
             int extentNum = getParam("extent", 0);
@@ -478,7 +533,8 @@ public :
             BSONObjBuilder extentBuilder;
             Data extentData = examineExtent(ex, extentBuilder, hasParam("numChunks"), granularity,
                                             numChunks, getParam("ofsFrom", 0),
-                                            getParam("ofsTo", INT_MAX));
+                                            getParam("ofsTo", INT_MAX), charactField.get(),
+                                            charactFieldIsObjId);
             printStats(out, str::stream() << "extent " << extentNum, extentData);
             if (jsonOut != NULL) {
                 *jsonOut << extentBuilder.obj().jsonString() << endl;
@@ -489,7 +545,8 @@ public :
         // otherwise (no specific options)
         {
             Data collData = examineCollection(out, jsonOut.get(), nsd, hasParam("numChunks"),
-                                              granularity, numChunks, hasParam("showExtents"));
+                                              granularity, numChunks, hasParam("showExtents"),
+                                              charactField.get(), charactFieldIsObjId);
             printStats(out, "collection", collData);
         }
         return 0;
