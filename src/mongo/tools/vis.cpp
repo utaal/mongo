@@ -258,82 +258,102 @@ public :
         return 0;
     }
 
+    Data extractCharactFieldValue(BSONObj& obj, const string* charactField,
+                                  bool charactFieldIsObjId) {
+        Data result(0);
+        if (charactField != NULL) {
+            BSONElement elem = obj.getFieldDotted(*charactField);
+            if (!elem.eoo()) {
+                bool hasval = false;
+                int val = INT_MIN;
+                if (charactFieldIsObjId) {
+                    OID oid = elem.OID();
+                    val = now - oid.asTimeT();
+                    hasval = true;
+                }
+                else if (elem.isNumber()) {
+                    val = elem.numberDouble();
+                    hasval = true;
+                }
+
+                if (hasval) {
+                    result.charactSum += val;
+                    result.charactCount += 1;
+                }
+            }
+        }
+        return result;
+    }
+
+    struct ExamineConfig {
+        int startOfs;
+        int endOfs;
+        int numberOfChunks;
+        int granularity;
+        const string* charactField;
+        bool charactFieldIsObjId;
+    };
+
+    void examineRecord(const Record* r, DiskLoc& dl, int extentOfs, int numberOfChunks,
+                       const ExamineConfig& config, vector<Data>& chunkData, Data& extentData) {
+        int chunkNum = (dl.getOfs() - extentOfs - config.startOfs) / config.granularity;
+        int endOfChunk = (chunkNum + 1) * config.granularity + config.startOfs + extentOfs - 1;
+        int leftInChunk = endOfChunk - dl.getOfs();
+        //TODO(andrea.lattuada) accout for records overlapping the beginning of chunk boundary
+        //TODO(andrea.lattuada) count partial records for numEntries
+        if (chunkNum >= 0 && chunkNum < numberOfChunks) {
+            Data& chunk = chunkData.at(chunkNum);
+            chunk.numEntries++;
+            extentData.numEntries++;
+            int recSize = r->lengthWithHeaders();
+            int exceedsChunkBy = r->lengthWithHeaders() - leftInChunk;
+            BSONObj obj = dl.obj();
+            int bsonSize = obj.objsize();
+            Data charactFieldData = extractCharactFieldValue(obj, config.charactField,
+                                                             config.charactFieldIsObjId);
+            chunk += charactFieldData;
+            extentData += charactFieldData;
+            if (exceedsChunkBy <= 0) {
+                chunk.recSize += recSize;
+                extentData.recSize += recSize;
+                chunk.bsonSize += bsonSize;
+                extentData.bsonSize += bsonSize;
+            } else { // record overlaps the end of chunk boundary
+                chunk.recSize += leftInChunk;
+                extentData.recSize += leftInChunk;
+                int bsonSizeAccountingHere = ((double) leftInChunk / recSize) * bsonSize;
+                chunk.bsonSize += bsonSizeAccountingHere;
+                extentData.bsonSize += bsonSizeAccountingHere;
+                if (chunkNum + 1 < numberOfChunks) {
+                    Data& nextChunk = chunkData.at(chunkNum + 1);
+                    nextChunk.recSize += exceedsChunkBy;
+                    nextChunk.bsonSize += bsonSize - bsonSizeAccountingHere;
+                    extentData.recSize += exceedsChunkBy;
+                    extentData.bsonSize += bsonSize - bsonSizeAccountingHere;
+                }
+            }
+        }
+    }
+
     /**
      * Note: should not be called directly. Use one of the examineExtent overloads.
      */
-    Data examineExtentInternal(const Extent* ex, BSONObjBuilder& extentBuilder, int granularity,
-                               int startOfs, int endOfs, const string* charactField,
-                               bool charactFieldIsObjId) {
-        startOfs = (startOfs > 0) ? startOfs : 0;
-        endOfs = (endOfs <= ex->length) ? endOfs : ex->length;
-        int length = endOfs - startOfs;
-        Data extentData(endOfs - startOfs);
+    Data examineExtentInternal(const Extent* ex,
+                               BSONObjBuilder& extentBuilder, ExamineConfig config) {
+        config.startOfs = (config.startOfs > 0) ? config.startOfs : 0;
+        config.endOfs = (config.endOfs <= ex->length) ? config.endOfs : ex->length;
+        int length = config.endOfs - config.startOfs;
+        Data extentData(length);
         Record * r;
-        int numberOfChunks = (length + granularity - 1) / granularity;
+        int numberOfChunks = (length + config.granularity - 1) / config.granularity;
         DEV log() << "this extent or part of extent (" << length << " long) will be split in "
           << numberOfChunks << " chunks" << endl;
-        vector<Data> chunkData(numberOfChunks, Data(granularity));
-        chunkData[numberOfChunks - 1].onDiskSize = length - (granularity * (numberOfChunks - 1));
-        //TODO(andrea.lattuada) refactor?
+        vector<Data> chunkData(numberOfChunks, Data(config.granularity));
+        chunkData[numberOfChunks - 1].onDiskSize = length -
+                                                   (config.granularity * (numberOfChunks - 1));
         for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) {
             r = dl.rec();
-            int chunkNum = (dl.getOfs() - ex->myLoc.getOfs() - startOfs) / granularity;
-            int endOfChunk = (chunkNum + 1) * granularity + startOfs + ex->myLoc.getOfs() - 1;
-            int leftInChunk = endOfChunk - dl.getOfs();
-            //TODO(andrea.lattuada) accout for records overlapping the beginning of chunk boundary
-            //TODO(andrea.lattuada) count partial records for numEntries
-            if (chunkNum >= 0 && chunkNum < numberOfChunks) {
-                Data& chunk = chunkData.at(chunkNum);
-                chunk.numEntries++;
-                extentData.numEntries++;
-                int recSize = r->lengthWithHeaders();
-                int exceedsChunkBy = r->lengthWithHeaders() - leftInChunk;
-                BSONObj obj = dl.obj();
-                int bsonSize = obj.objsize();
-                //TODO(andrea.lattuada) factor out as a separate method
-                if (charactField != NULL) {
-                    BSONElement elem = obj.getFieldDotted(*charactField);
-                    if (!elem.eoo()) {
-                        bool hasval = false;
-                        int val = INT_MIN;
-                        if (charactFieldIsObjId) {
-                            OID oid = elem.OID();
-                            val = now - oid.asTimeT();
-                            hasval = true;
-                        }
-                        else if (elem.isNumber()) {
-                            val = elem.numberDouble();
-                            hasval = true;
-                        }
-
-                        if (hasval) {
-                            chunk.charactSum += val;
-                            chunk.charactCount += 1;
-                            extentData.charactSum += val;
-                            extentData.charactCount += 1;
-                        }
-                    }
-                }
-                if (exceedsChunkBy <= 0) {
-                    chunk.recSize += recSize;
-                    extentData.recSize += recSize;
-                    chunk.bsonSize += bsonSize;
-                    extentData.bsonSize += bsonSize;
-                } else { // record overlaps the end of chunk boundary
-                    chunk.recSize += leftInChunk;
-                    extentData.recSize += leftInChunk;
-                    int bsonSizeAccountingHere = ((double) leftInChunk / recSize) * bsonSize;
-                    chunk.bsonSize += bsonSizeAccountingHere;
-                    extentData.bsonSize += bsonSizeAccountingHere;
-                    if (chunkNum + 1 < numberOfChunks) {
-                        Data& nextChunk = chunkData.at(chunkNum + 1);
-                        nextChunk.recSize += exceedsChunkBy;
-                        nextChunk.bsonSize += bsonSize - bsonSizeAccountingHere;
-                        extentData.recSize += exceedsChunkBy;
-                        extentData.bsonSize += bsonSize - bsonSizeAccountingHere;
-                    }
-                }
-            }
+            examineRecord(r, dl, ex->myLoc.getOfs(), numberOfChunks, config, chunkData, extentData);
         }
         BSONArrayBuilder chunkArrayBuilder (extentBuilder.subarrayStart("chunks"));
         for (vector<Data>::iterator it = chunkData.begin(); it != chunkData.end(); ++it) {
@@ -351,10 +371,16 @@ public :
      * @param granularity size of the chunks the extent should be split into for analysis
      * @return aggregate data related to the entire extent
      */
-    inline Data examineExtent(const Extent* ex, BSONObjBuilder& extentBuilder, int granularity,
-                              const string* charactField, bool charactFieldIsObjId) {
-        return examineExtentInternal(ex, extentBuilder, granularity, 0, INT_MAX, charactField,
-                                     charactFieldIsObjId);
+    inline Data examineEntireExtent(const Extent* ex, BSONObjBuilder& extentBuilder,
+                                    int granularity, const string* charactField,
+                                    bool charactFieldIsObjId) {
+        ExamineConfig config;
+        config.startOfs = 0;
+        config.endOfs = INT_MAX;
+        config.granularity = granularity;
+        config.charactField = charactField;
+        config.charactFieldIsObjId = charactFieldIsObjId;
+        return examineExtentInternal(ex, extentBuilder, config);
     }
 
     /**
@@ -365,17 +391,21 @@ public :
      * @param numChunks number of chunks this part of extent should be split into
      * @return aggregate data related to the part of extent requested
      */
-    inline Data examineExtent(const Extent* ex, BSONObjBuilder& extentBuilder, bool useNumChunks,
-                              int granularity, int numChunks, int startOfs, int endOfs,
-                              const string* charactField, bool charactFieldIsObjId) {
-        if (endOfs > ex->length) {
-            endOfs = ex->length;
-        }
+    inline Data examinePartOfExtent(const Extent* ex, BSONObjBuilder& extentBuilder,
+                                    bool useNumChunks, int granularity, int numChunks, int startOfs,
+                                    int endOfs, const string* charactField,
+                                    bool charactFieldIsObjId) {
+        ExamineConfig config;
+        config.startOfs = startOfs;
+        config.endOfs = min(endOfs, ex->length);
         if (useNumChunks) {
-            granularity = (endOfs - startOfs + numChunks - 1) / numChunks;
+            config.granularity = (config.endOfs - config.startOfs + numChunks - 1) / numChunks;
+        } else {
+            config.granularity = granularity;
         }
-        return examineExtentInternal(ex, extentBuilder, granularity, startOfs, endOfs, charactField,
-                                     charactFieldIsObjId);
+        config.charactField = charactField;
+        config.charactFieldIsObjId = charactFieldIsObjId;
+        return examineExtentInternal(ex, extentBuilder, config);
     }
 
     /**
@@ -410,8 +440,8 @@ public :
              ex != 0;
              ex = ex->getNextExtent(), ++curExtent) {
             BSONObjBuilder extentBuilder (extentArrayBuilder.subobjStart());
-            Data extentData = examineExtent(ex, extentBuilder, granularity, charactField,
-                                            charactFieldIsObjId);
+            Data extentData = examineEntireExtent(ex, extentBuilder, granularity, charactField,
+                                                  charactFieldIsObjId);
             extentBuilder.done();
             if (showExtents) {
                 printStats(out, str::stream() << "extent " << curExtent, extentData);
@@ -422,6 +452,7 @@ public :
         extentArrayBuilder.done();
 
         if (jsonOut != NULL) {
+            collectionData.appendToBSONObjBuilder(collectionBuilder);
             *jsonOut << collectionBuilder.obj().jsonString() << endl;
         }
         return collectionData;
@@ -531,10 +562,10 @@ public :
                 return -1;
             }
             BSONObjBuilder extentBuilder;
-            Data extentData = examineExtent(ex, extentBuilder, hasParam("numChunks"), granularity,
-                                            numChunks, getParam("ofsFrom", 0),
-                                            getParam("ofsTo", INT_MAX), charactField.get(),
-                                            charactFieldIsObjId);
+            Data extentData = examinePartOfExtent(ex, extentBuilder, hasParam("numChunks"),
+                                                  granularity, numChunks, getParam("ofsFrom", 0),
+                                                  getParam("ofsTo", INT_MAX), charactField.get(),
+                                                  charactFieldIsObjId);
             printStats(out, str::stream() << "extent " << extentNum, extentData);
             if (jsonOut != NULL) {
                 *jsonOut << extentBuilder.obj().jsonString() << endl;
