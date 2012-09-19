@@ -89,7 +89,12 @@ public :
             this->onDiskSize += rhs.onDiskSize;
             this->charactSum += rhs.charactSum;
             this->charactCount += rhs.charactCount;
-
+            vector<int>::const_iterator rhsit = rhs.freeRecords.begin();
+            for (vector<int>::iterator thisit = this->freeRecords.begin();
+                     thisit != this->freeRecords.end(); thisit++) {
+                *thisit += *rhsit;
+                rhsit++;
+            }
             return result;
         }
 
@@ -103,6 +108,7 @@ public :
                 b.append("charactSum", charactSum);
                 b.append("charactCount", (double) charactCount);
             }
+            b.append("freeRecsPerBucket", freeRecords);
         }
     };
 
@@ -385,6 +391,23 @@ public :
         }
     }
 
+    void examineDeletedRecord(const DiskLoc& dl, const DeletedRecord* dr, int bucketNum,
+                              int extentOfs, int numberOfChunks, const ExamineConfig& config,
+                              vector<Data> chunkData, Data& extentData) {
+        RecPosInChunks pos = RecPosInChunks::from(dl.getOfs(), dr->lengthWithHeaders(), extentOfs,
+                                                  numberOfChunks, config);
+        if (pos.curChunkExists) {
+            Data& chunk = chunkData.at(pos.chunkNum);
+            chunk.freeRecords.at(bucketNum) += pos.inCurChunkRatio;
+            extentData.freeRecords.at(bucketNum) += pos.inCurChunkRatio;
+        }
+        if (pos.nextChunkExists) {
+            Data& chunk = chunkData.at(pos.nextChunkNum);
+            chunk.freeRecords.at(bucketNum) += 1.0l - pos.inCurChunkRatio;
+            extentData.freeRecords.at(bucketNum) += 1.0l - pos.inCurChunkRatio;
+        }
+    }
+
     /**
      * Note: should not be called directly. Use one of the examineExtent overloads.
      */
@@ -407,11 +430,15 @@ public :
             examineRecord(r, dl, ex->myLoc.getOfs(), numberOfChunks, config, chunkData, extentData);
         }
 
-        // for (int bucketNum = 0; bucketNum < mongo::Buckets; bucketNum++) {
-        //     DiskLoc dl = nsd->deletedList[bucketNum];
-        //     while (!dl.isNull()) {
-        //     }
-        // }
+        for (int bucketNum = 0; bucketNum < mongo::Buckets; bucketNum++) {
+            DiskLoc dl = nsd->deletedList[bucketNum];
+            while (!dl.isNull()) {
+                DeletedRecord* dr = dl.drec();
+                examineDeletedRecord(dl, dr, bucketNum, ex->myLoc.getOfs(), numberOfChunks, config,
+                                     chunkData, extentData);
+                dl = dr->nextDeleted();
+            }
+        }
 
         BSONArrayBuilder chunkArrayBuilder (extentBuilder.subarrayStart("chunks"));
         for (vector<Data>::iterator it = chunkData.begin(); it != chunkData.end(); ++it) {
