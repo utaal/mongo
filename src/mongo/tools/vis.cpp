@@ -24,6 +24,7 @@
 #include <list>
 #include <string>
 
+#include <boost/array.hpp>
 #include <boost/filesystem/convenience.hpp>
 #include <boost/filesystem/operations.hpp>
 
@@ -66,15 +67,17 @@ public :
      * Contains aggregate data regarding (a part of) an extent or collection.
      */
     struct Data {
-        long long numEntries;
+        long double numEntries;
         long long bsonSize;
         long long recSize;
         long long onDiskSize;
         double charactSum;
-        long long charactCount;
+        long double charactCount;
+        vector<int> freeRecords; // per bucket
 
         Data(long long diskSize) : numEntries(0), bsonSize(0), recSize(0), onDiskSize(diskSize),
-                                   charactSum(0), charactCount(0) {
+                                   charactSum(0), charactCount(0),
+                                   freeRecords(mongo::Buckets, 0) {
         }
 
         const Data operator += (const Data &rhs) {
@@ -92,13 +95,13 @@ public :
 
         /** Note: ownership is retained by the caller */
         void appendToBSONObjBuilder(BSONObjBuilder& b) const {
-            b.append("numEntries", numEntries);
+            b.append("numEntries", (double) numEntries);
             b.append("bsonSize", bsonSize);
             b.append("recSize", recSize);
             b.append("onDiskSize", onDiskSize);
             if (charactCount > 0) {
                 b.append("charactSum", charactSum);
-                b.append("charactCount", charactCount);
+                b.append("charactCount", (double) charactCount);
             }
         }
     };
@@ -258,33 +261,6 @@ public :
         return 0;
     }
 
-    Data extractCharactFieldValue(BSONObj& obj, const string* charactField,
-                                  bool charactFieldIsObjId) {
-        Data result(0);
-        if (charactField != NULL) {
-            BSONElement elem = obj.getFieldDotted(*charactField);
-            if (!elem.eoo()) {
-                bool hasval = false;
-                int val = INT_MIN;
-                if (charactFieldIsObjId) {
-                    OID oid = elem.OID();
-                    val = now - oid.asTimeT();
-                    hasval = true;
-                }
-                else if (elem.isNumber()) {
-                    val = elem.numberDouble();
-                    hasval = true;
-                }
-
-                if (hasval) {
-                    result.charactSum += val;
-                    result.charactCount += 1;
-                }
-            }
-        }
-        return result;
-    }
-
     struct ExamineConfig {
         int startOfs;
         int endOfs;
@@ -294,51 +270,125 @@ public :
         bool charactFieldIsObjId;
     };
 
+    struct RecPosInChunks {
+        int chunkNum;
+        int nextChunkNum;
+        int endOfChunk;
+        int sizeInCurChunk;
+        bool curChunkExists;
+        int sizeInNextChunk;
+        bool nextChunkExists;
+        bool overlapsBoundary;
+        double inCurChunkRatio;
+
+        RecPosInChunks() : overlapsBoundary(false), inCurChunkRatio(1) {
+        }
+
+        static const RecPosInChunks from(int recOfs, int recLen, int extentOfs, int numberOfChunks,
+                                         const ExamineConfig& config) {
+            RecPosInChunks res;
+            res.chunkNum = (recOfs - extentOfs - config.startOfs) / config.granularity;
+            res.nextChunkNum = res.chunkNum + 1;
+            res.endOfChunk = (res.nextChunkNum) * config.granularity + config.startOfs + extentOfs
+                             - 1;
+            res.sizeInCurChunk = min(res.endOfChunk - recOfs, recLen);
+            res.sizeInNextChunk = recLen - res.sizeInCurChunk;
+            if (res.sizeInNextChunk > 0) {
+                res.overlapsBoundary = true;
+                res.inCurChunkRatio = res.sizeInCurChunk / recLen;
+            } else {
+                res.sizeInNextChunk = 0;
+            }
+            res.curChunkExists = (res.chunkNum >= 0 && res.chunkNum < numberOfChunks);
+            res.nextChunkExists = (res.nextChunkNum >= 0 && res.nextChunkNum < numberOfChunks);
+            return res;
+        }
+    };
+
+
+    bool extractCharactFieldValue(BSONObj& obj, const string* charactField,
+                                  bool charactFieldIsObjId, /* out */ double* value) {
+        Data result(0);
+        if (charactField == NULL) {
+            return false;
+        }
+        BSONElement elem = obj.getFieldDotted(*charactField);
+        if (elem.eoo()) {
+            return false;
+        }
+        bool hasval = false;
+        if (charactFieldIsObjId) {
+            OID oid = elem.OID();
+            *value = now - oid.asTimeT();
+            hasval = true;
+        }
+        else if (elem.isNumber()) {
+            *value = elem.numberDouble();
+            hasval = true;
+        }
+        return hasval;
+    }
+
+    void addRecToChunk(Data& chunk, Data& extentData, double count, int recSize, int bsonSize,
+                       double charactCount, double charactSum) {
+         chunk.numEntries += count;
+         extentData.numEntries += count;
+         chunk.recSize += recSize;
+         extentData.recSize += recSize;
+         chunk.bsonSize += bsonSize;
+         extentData.bsonSize += bsonSize;
+         chunk.charactSum += charactSum;
+         extentData.charactSum += charactSum;
+         chunk.charactCount += charactCount;
+         extentData.charactSum += charactSum;
+    }
+
     void examineRecord(const Record* r, DiskLoc& dl, int extentOfs, int numberOfChunks,
                        const ExamineConfig& config, vector<Data>& chunkData, Data& extentData) {
-        int chunkNum = (dl.getOfs() - extentOfs - config.startOfs) / config.granularity;
-        int endOfChunk = (chunkNum + 1) * config.granularity + config.startOfs + extentOfs - 1;
-        int leftInChunk = endOfChunk - dl.getOfs();
+        //int chunkNum = (dl.getOfs() - extentOfs - config.startOfs) / config.granularity;
+        //int endOfChunk = (chunkNum + 1) * config.granularity + config.startOfs + extentOfs - 1;
+        //int leftInChunk = endOfChunk - dl.getOfs();
+        int recSize = r->lengthWithHeaders();
+        RecPosInChunks pos = RecPosInChunks::from(dl.getOfs(), recSize, extentOfs,
+                                                  numberOfChunks, config);
         //TODO(andrea.lattuada) accout for records overlapping the beginning of chunk boundary
         //TODO(andrea.lattuada) count partial records for numEntries
-        if (chunkNum >= 0 && chunkNum < numberOfChunks) {
-            Data& chunk = chunkData.at(chunkNum);
-            chunk.numEntries++;
-            extentData.numEntries++;
-            int recSize = r->lengthWithHeaders();
-            int exceedsChunkBy = r->lengthWithHeaders() - leftInChunk;
-            BSONObj obj = dl.obj();
-            int bsonSize = obj.objsize();
-            Data charactFieldData = extractCharactFieldValue(obj, config.charactField,
-                                                             config.charactFieldIsObjId);
-            chunk += charactFieldData;
-            extentData += charactFieldData;
-            if (exceedsChunkBy <= 0) {
-                chunk.recSize += recSize;
-                extentData.recSize += recSize;
-                chunk.bsonSize += bsonSize;
-                extentData.bsonSize += bsonSize;
-            } else { // record overlaps the end of chunk boundary
-                chunk.recSize += leftInChunk;
-                extentData.recSize += leftInChunk;
-                int bsonSizeAccountingHere = ((double) leftInChunk / recSize) * bsonSize;
-                chunk.bsonSize += bsonSizeAccountingHere;
-                extentData.bsonSize += bsonSizeAccountingHere;
-                if (chunkNum + 1 < numberOfChunks) {
-                    Data& nextChunk = chunkData.at(chunkNum + 1);
-                    nextChunk.recSize += exceedsChunkBy;
-                    nextChunk.bsonSize += bsonSize - bsonSizeAccountingHere;
-                    extentData.recSize += exceedsChunkBy;
-                    extentData.bsonSize += bsonSize - bsonSizeAccountingHere;
-                }
+        BSONObj obj = dl.obj();
+        int bsonSize = obj.objsize();
+        double charactValue = 0;
+        bool hasCharactValue = extractCharactFieldValue(obj, config.charactField,
+                                                        config.charactFieldIsObjId,
+                                                        /*out*/ &charactValue);
+        if (pos.curChunkExists) {
+            // avoid conversion of sizes to double if not needed
+            if (!pos.overlapsBoundary) {
+                Data& chunk = chunkData.at(pos.chunkNum);
+                addRecToChunk(chunk, extentData, 1, recSize, bsonSize, hasCharactValue ? 1 : 0,
+                              charactValue);
+            } else {
+                Data& chunk = chunkData.at(pos.chunkNum);
+                int bsonSizeAccountingHere = pos.inCurChunkRatio * bsonSize;
+                double charactValueAccountingHere = pos.inCurChunkRatio * charactValue;
+                addRecToChunk(chunk, extentData, pos.inCurChunkRatio, pos.sizeInCurChunk,
+                              bsonSizeAccountingHere, hasCharactValue ? pos.inCurChunkRatio : 0,
+                              charactValueAccountingHere);
             }
+        }
+        if (pos.nextChunkExists && pos.overlapsBoundary) {
+            Data& chunk = chunkData.at(pos.nextChunkNum);
+            int bsonSizeAccountingHere = (1.0l - pos.inCurChunkRatio) * bsonSize;
+            double charactValueAccountingHere = (1.0l - pos.inCurChunkRatio) * charactValue;
+            addRecToChunk(chunk, extentData, (1.0l - pos.inCurChunkRatio), pos.sizeInNextChunk,
+                          bsonSizeAccountingHere,
+                          hasCharactValue ? (1.0l - pos.inCurChunkRatio) : 0,
+                          charactValueAccountingHere);
         }
     }
 
     /**
      * Note: should not be called directly. Use one of the examineExtent overloads.
      */
-    Data examineExtentInternal(const Extent* ex,
+    Data examineExtentInternal(const NamespaceDetails* nsd, const Extent* ex,
                                BSONObjBuilder& extentBuilder, ExamineConfig config) {
         config.startOfs = (config.startOfs > 0) ? config.startOfs : 0;
         config.endOfs = (config.endOfs <= ex->length) ? config.endOfs : ex->length;
@@ -351,10 +401,18 @@ public :
         vector<Data> chunkData(numberOfChunks, Data(config.granularity));
         chunkData[numberOfChunks - 1].onDiskSize = length -
                                                    (config.granularity * (numberOfChunks - 1));
+
         for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) {
             r = dl.rec();
             examineRecord(r, dl, ex->myLoc.getOfs(), numberOfChunks, config, chunkData, extentData);
         }
+
+        // for (int bucketNum = 0; bucketNum < mongo::Buckets; bucketNum++) {
+        //     DiskLoc dl = nsd->deletedList[bucketNum];
+        //     while (!dl.isNull()) {
+        //     }
+        // }
+
         BSONArrayBuilder chunkArrayBuilder (extentBuilder.subarrayStart("chunks"));
         for (vector<Data>::iterator it = chunkData.begin(); it != chunkData.end(); ++it) {
             BSONObjBuilder chunkBuilder;
@@ -371,7 +429,8 @@ public :
      * @param granularity size of the chunks the extent should be split into for analysis
      * @return aggregate data related to the entire extent
      */
-    inline Data examineEntireExtent(const Extent* ex, BSONObjBuilder& extentBuilder,
+    inline Data examineEntireExtent(const NamespaceDetails* nsd, const Extent* ex,
+                                    BSONObjBuilder& extentBuilder,
                                     int granularity, const string* charactField,
                                     bool charactFieldIsObjId) {
         ExamineConfig config;
@@ -380,7 +439,7 @@ public :
         config.granularity = granularity;
         config.charactField = charactField;
         config.charactFieldIsObjId = charactFieldIsObjId;
-        return examineExtentInternal(ex, extentBuilder, config);
+        return examineExtentInternal(nsd, ex, extentBuilder, config);
     }
 
     /**
@@ -391,7 +450,8 @@ public :
      * @param numChunks number of chunks this part of extent should be split into
      * @return aggregate data related to the part of extent requested
      */
-    inline Data examinePartOfExtent(const Extent* ex, BSONObjBuilder& extentBuilder,
+    inline Data examinePartOfExtent(const NamespaceDetails* nsd, const Extent* ex,
+                                    BSONObjBuilder& extentBuilder,
                                     bool useNumChunks, int granularity, int numChunks, int startOfs,
                                     int endOfs, const string* charactField,
                                     bool charactFieldIsObjId) {
@@ -405,7 +465,7 @@ public :
         }
         config.charactField = charactField;
         config.charactFieldIsObjId = charactFieldIsObjId;
-        return examineExtentInternal(ex, extentBuilder, config);
+        return examineExtentInternal(nsd, ex, extentBuilder, config);
     }
 
     /**
@@ -440,7 +500,7 @@ public :
              ex != 0;
              ex = ex->getNextExtent(), ++curExtent) {
             BSONObjBuilder extentBuilder (extentArrayBuilder.subobjStart());
-            Data extentData = examineEntireExtent(ex, extentBuilder, granularity, charactField,
+            Data extentData = examineEntireExtent(nsd, ex, extentBuilder, granularity, charactField,
                                                   charactFieldIsObjId);
             extentBuilder.done();
             if (showExtents) {
@@ -562,7 +622,7 @@ public :
                 return -1;
             }
             BSONObjBuilder extentBuilder;
-            Data extentData = examinePartOfExtent(ex, extentBuilder, hasParam("numChunks"),
+            Data extentData = examinePartOfExtent(nsd, ex, extentBuilder, hasParam("numChunks"),
                                                   granularity, numChunks, getParam("ofsFrom", 0),
                                                   getParam("ofsTo", INT_MAX), charactField.get(),
                                                   charactFieldIsObjId);
