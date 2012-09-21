@@ -100,6 +100,10 @@ namespace mongo {
 
         bool supported();
 
+        static inline bool pageSizeSupported();
+
+        static inline size_t pageSize();
+
         static bool blockCheckSupported();
 
         static bool blockInMemory( char * start );
@@ -149,6 +153,8 @@ namespace mongo {
             }
             return *initSysInfo;
         }
+
+        static size_t _pageSizeInternal;
 
     };
 

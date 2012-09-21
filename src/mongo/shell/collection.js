@@ -426,6 +426,17 @@ DBCollection.prototype.validate = function(full) {
     return res;
 }
 
+DBCollection.prototype.storageDetails = function(par) {
+    var cmd = { storageDetails: this.getName() };
+
+    if (typeof(par) == 'object') // support arbitrary options here
+        Object.extend(cmd, full);
+
+    var res = this._db.runCommand( cmd );
+
+    return res;
+}
+
 DBCollection.prototype.getShardVersion = function(){
     return this._db._adminCommand( { getShardVersion : this._fullName } );
 }

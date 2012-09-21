@@ -33,6 +33,7 @@
 #include "mongo/db/jsobj.h"
 #include "mongo/db/namespace_details.h"
 #include "mongo/tools/tool.h"
+#include "mongo/util/processinfo.h"
 
 using namespace mongo;
 
@@ -59,6 +60,8 @@ public :
         ("ofsTo", po::value<int>(), "offset after the last one to analyze")
         ("orderExtent,e", po::value<int>(),
          "rearrange record pointers so that they are in the same order as they are on disk")
+        ("pagesInMemory",
+         "show which pages comprised in the extent are loaded in core memory")
         ("showExtents", "show detailed info for each extent")
         ;
     }
@@ -233,6 +236,27 @@ public :
         return 0;
     }
 
+    void pagesInMemory(ostream& out, BSONObjBuilder& b, const Extent* ex) {
+        //TODO(andrea.lattuada) review
+        verify(sizeof(char) == 1);
+        size_t pageSize = ProcessInfo::pageSize();
+        int pageCount = (ex->length + pageSize - 1) / pageSize;
+        BSONArrayBuilder arr(b.subarrayStart("pagesInMemory"));
+        int inMemCount = 0;
+        DEV log() << "extent starts at " << ex << endl;
+        DEV log() << "first record at " << ex->firstRecord.rec() << endl;
+        DEV log() << "last record at " << ex->lastRecord.rec() << endl;
+        for (int page = 0; page < pageCount; ++page) {
+            bool inMem = ProcessInfo::blockInMemory((char *) ex + page * pageSize);
+            arr.append(inMem ? 1 : 0);
+            if (inMem) {
+                ++inMemCount;
+            }
+        }
+        arr.done();
+        out << inMemCount << " of " << pageCount << " pages in core" << endl;
+    }
+
     /**
      * Print out all the namespaces in the database and general information about the extents they
      * refer to.
@@ -393,7 +417,7 @@ public :
 
     void examineDeletedRecord(const DiskLoc& dl, const DeletedRecord* dr, int bucketNum,
                               int extentOfs, int numberOfChunks, const ExamineConfig& config,
-                              vector<Data> chunkData, Data& extentData) {
+                              vector<Data>& chunkData, Data& extentData) {
         RecPosInChunks pos = RecPosInChunks::from(dl.getOfs(), dr->lengthWithHeaders(), extentOfs,
                                                   numberOfChunks, config);
         if (pos.curChunkExists) {
@@ -401,7 +425,7 @@ public :
             chunk.freeRecords.at(bucketNum) += pos.inCurChunkRatio;
             extentData.freeRecords.at(bucketNum) += pos.inCurChunkRatio;
         }
-        if (pos.nextChunkExists) {
+        if (pos.nextChunkExists && pos.overlapsBoundary) {
             Data& chunk = chunkData.at(pos.nextChunkNum);
             chunk.freeRecords.at(bucketNum) += 1.0l - pos.inCurChunkRatio;
             extentData.freeRecords.at(bucketNum) += 1.0l - pos.inCurChunkRatio;
@@ -431,11 +455,15 @@ public :
         }
 
         for (int bucketNum = 0; bucketNum < mongo::Buckets; bucketNum++) {
+            //TODO(andrea.lattuada) move this to examineCollection (ensure invocation when using
+            //                      examinePartOfExtent directly
             DiskLoc dl = nsd->deletedList[bucketNum];
             while (!dl.isNull()) {
                 DeletedRecord* dr = dl.drec();
-                examineDeletedRecord(dl, dr, bucketNum, ex->myLoc.getOfs(), numberOfChunks, config,
-                                     chunkData, extentData);
+                if (dl.a() == ex->myLoc.a()) {
+                  examineDeletedRecord(dl, dr, bucketNum, ex->myLoc.getOfs(), numberOfChunks, config,
+                                       chunkData, extentData);
+                }
                 dl = dr->nextDeleted();
             }
         }
@@ -605,6 +633,7 @@ public :
             }
         }
 
+
         // --orderExtent
         if (hasParam("orderExtent")) {
             int extentNum = getParam("orderExtent", 0);
@@ -636,6 +665,7 @@ public :
         if (hasParam("extent")) {
             int extentNum = getParam("extent", 0);
             int curExtent;
+
             Extent * ex;
             //TODO(andrea.lattuada) it looks like looping is not stopped when the last available
             //                      extent is reached
@@ -649,6 +679,16 @@ public :
                 return -1;
             }
             BSONObjBuilder extentBuilder;
+            // --pagesInMemory
+            if (hasParam("pagesInMemory")) {
+                BSONObjBuilder extentBuilder;
+                pagesInMemory(out, extentBuilder, ex);
+                if (jsonOut != NULL) {
+                    *jsonOut << extentBuilder.obj().jsonString() << endl;
+                }
+                return 0;
+            }
+
             Data extentData = examinePartOfExtent(nsd, ex, extentBuilder, hasParam("numChunks"),
                                                   granularity, numChunks, getParam("ofsFrom", 0),
                                                   getParam("ofsTo", INT_MAX), charactField.get(),
