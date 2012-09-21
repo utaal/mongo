@@ -426,11 +426,11 @@ DBCollection.prototype.validate = function(full) {
     return res;
 }
 
-DBCollection.prototype.storageDetails = function(par) {
+DBCollection.prototype.storageDetails = function(opt) {
     var cmd = { storageDetails: this.getName() };
 
-    if (typeof(par) == 'object') // support arbitrary options here
-        Object.extend(cmd, full);
+    if (typeof(opt) == 'object') // support arbitrary options here
+        Object.extend(cmd, opt);
 
     var res = this._db.runCommand( cmd );
 
