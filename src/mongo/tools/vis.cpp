@@ -16,6 +16,8 @@
 *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#error TODO(andrea.lattuada) this file will go away.
+
 #include "mongo/pch.h"
 
 #include <ctime>

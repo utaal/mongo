@@ -85,7 +85,6 @@ scratch
 /mongotop
 /mongooplog
 /mongoperf
-/mongovis
 /bsondump
 
 *.tgz
