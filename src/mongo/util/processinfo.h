@@ -100,9 +100,12 @@ namespace mongo {
 
         bool supported();
 
-        static inline bool pageSizeSupported();
+        static bool pageSizeSupported();
 
-        static inline size_t pageSize();
+        //TODO(andrea.lattuada) should probably be inline for performance reasons
+        //                      this method is now called once for every call to
+        //                      blockInMemory on some platforms
+        static size_t pageSize();
 
         static bool blockCheckSupported();
 
