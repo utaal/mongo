@@ -85,9 +85,11 @@ namespace {
         long long onDiskSize;
         double charactSum;
         long double charactCount;
+        vector<double> freeRecords;
 
         DiskStorageData(long long diskSize) : numEntries(0), bsonSize(0), recSize(0),
-                                   onDiskSize(diskSize), charactSum(0), charactCount(0) {
+                                              onDiskSize(diskSize), charactSum(0), charactCount(0),
+                                              freeRecords(mongo::Buckets, 0) {
         }
 
         const DiskStorageData operator += (const DiskStorageData& rhs);
@@ -125,7 +127,7 @@ namespace {
             DEV verify(firstChunkNum < chunkNum && chunkNum < lastChunkNum);
             sizeHere = sizeInMiddleChunk;
             ratioHere = inMiddleChunkRatio;
-            DEV verify(sizeHere >= 0 && ratioHere >= 0);
+            DEV verify(sizeHere >= 0 && ratioHere >= 0 && ratioHere <= 1);
         }
     };
 
@@ -151,8 +153,8 @@ namespace {
          */
         const Extent* getExtentNum(int extentNum, const NamespaceDetails* nsd);
 
-        bool analyzeDiskStorage(const Extent* ex, AnalyzeParams& params,
-                                string& errmsg, BSONObjBuilder& result);
+        bool analyzeDiskStorage(const NamespaceDetails* nsd, const Extent* ex,
+                                AnalyzeParams& params, string& errmsg, BSONObjBuilder& result);
 
         bool analyzeMemInCore(const Extent* ex, AnalyzeParams& params,
                               string& errmsg, BSONObjBuilder& result);
@@ -193,6 +195,11 @@ namespace {
         this->onDiskSize += rhs.onDiskSize;
         this->charactSum += rhs.charactSum;
         this->charactCount += rhs.charactCount;
+        vector<double>::const_iterator rhsit = rhs.freeRecords.begin();
+        for (vector<double>::iterator thisit = this->freeRecords.begin();
+                 thisit != this->freeRecords.end(); thisit++, rhsit++) {
+            *thisit += *rhsit;
+        }
         return result;
     }
 
@@ -205,6 +212,7 @@ namespace {
             b.append("charactSum", charactSum);
             b.append("charactCount", (double) charactCount);
         }
+        b.append("freeRecsPerBucket", freeRecords);
     }
 
     const RecPosInChunks RecPosInChunks::from(int recOfs, int recLen, int extentOfs,
@@ -229,8 +237,9 @@ namespace {
         return res;
     }
 
-    bool StorageDetailsCmd::analyzeDiskStorage(const Extent* ex, AnalyzeParams& params,
-                                               string& errmsg, BSONObjBuilder& result) {
+    bool StorageDetailsCmd::analyzeDiskStorage(const NamespaceDetails* nsd, const Extent* ex,
+                                               AnalyzeParams& params, string& errmsg,
+                                               BSONObjBuilder& result) {
         time_t now = time(NULL);
         vector<DiskStorageData> chunkData(params.numberOfChunks,
                                           DiskStorageData(params.granularity));
@@ -270,14 +279,47 @@ namespace {
             }
         }
 
-        BSONObjBuilder extentBuilder (result.subobjStart("extent"));
-        BSONArrayBuilder chunkArrayBuilder (extentBuilder.subarrayStart("chunks"));
+        //TODO(andrea.lattuada) refactor
+        if (nsd->isCapped()) {
+
+        }
+        else {
+            for (int bucketNum = 0; bucketNum < mongo::Buckets; bucketNum++) {
+                DiskLoc dl = nsd->deletedList[bucketNum];
+                while (!dl.isNull()) {
+                    DeletedRecord* dr = dl.drec();
+                    if (dl.a() == ex->myLoc.a() && dl.getOfs() >= extentOfs &&
+                            dl.getOfs() < extentOfs + ex->length) {
+
+                        RecPosInChunks pos = RecPosInChunks::from(dl.getOfs(), dr->lengthWithHeaders(),
+                                                                  extentOfs, params);
+                        for (int chunkNum = pos.firstChunkNum; chunkNum <= pos.lastChunkNum; ++chunkNum) {
+                            if (chunkNum < 0) { // the record starts before the beginning of the requested
+                                                // offset ranage
+                                continue;
+                            }
+                            if (chunkNum >= params.numberOfChunks) { // the records ends after the end of the
+                                                                     // requested offset range
+                                break;
+                            }
+                            DiskStorageData& chunk = chunkData.at(chunkNum);
+                            int sizeHere;
+                            double ratioHere;
+                            pos.inChunk(chunkNum, sizeHere, ratioHere);
+                            chunk.freeRecords.at(bucketNum) += ratioHere;
+                        }
+                    }
+                    dl = dr->nextDeleted();
+                }
+            }
+        }
+
         DiskStorageData extentData(0);
         for (vector<DiskStorageData>::iterator it = chunkData.begin();
              it != chunkData.end(); ++it) {
 
             killCurrentOp.checkForInterrupt();
-            extentData = *it;
+            extentData += *it;
             BSONObjBuilder chunkBuilder;
             it->appendToBSONObjBuilder(chunkBuilder);
             chunkArrayBuilder.append(chunkBuilder.obj());
@@ -449,7 +491,7 @@ namespace {
                    << " will be split in " << params.numberOfChunks << " chunks" << endl;
         switch (subCommand) {
             case SubCommand::diskStorage:
-                return analyzeDiskStorage(ex, params, errmsg, result);
+                return analyzeDiskStorage(nsd, ex, params, errmsg, result);
                 break;
             case SubCommand::memInCore:
                 return analyzeMemInCore(ex, params, errmsg, result);
