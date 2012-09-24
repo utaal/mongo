@@ -448,7 +448,8 @@ DBCollection.prototype.storageDetails = function(opt) {
             cmd.extent = extentNum;
             var cmdRes = this._db.runCommand(cmd);
             if (cmdRes.ok) {
-                result.extents.push(cmdRes.extent);
+                delete cmdRes.ok;
+                result.extents.push(cmdRes);
             } else {
                 result.ok = false;
                 result.errmsg = cmdRes.errmsg;

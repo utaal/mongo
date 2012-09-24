@@ -314,6 +314,7 @@ namespace {
             }
         }
 
+        BSONArrayBuilder chunkArrayBuilder (result.subarrayStart("chunks"));
         DiskStorageData extentData(0);
         for (vector<DiskStorageData>::iterator it = chunkData.begin();
              it != chunkData.end(); ++it) {
@@ -325,8 +326,7 @@ namespace {
             chunkArrayBuilder.append(chunkBuilder.obj());
         }
         chunkArrayBuilder.done();
-        extentData.appendToBSONObjBuilder(extentBuilder);
-        extentBuilder.done();
+        extentData.appendToBSONObjBuilder(result);
         return true;
     }
 
