@@ -63,7 +63,7 @@ DBCollection.prototype.help = function () {
     print("\tdb." + shortName + ".totalIndexSize() - size in bytes of all the indexes");
     print("\tdb." + shortName + ".totalSize() - storage allocated for all data and indexes");
     print("\tdb." + shortName + ".update(query, object[, upsert_bool, multi_bool]) - instead of two flags, you can pass an object with fields: upsert, multi");
-    print("\tdb." + shortName + ".validate( <full> ) - SLOW");;
+    print("\tdb." + shortName + ".validate( <full>, { listExtents: <t/f> } ) - SLOW");;
     print("\tdb." + shortName + ".getShardVersion() - only for use with sharding");
     print("\tdb." + shortName + ".getShardDistribution() - prints statistics about data distribution in the cluster");
     print("\tdb." + shortName + ".getSplitKeysForChunks( <maxChunkSize> ) - calculates split points over all chunks and returns splitter function");
@@ -401,6 +401,8 @@ DBCollection.prototype.validate = function(full) {
         Object.extend(cmd, full);
     else
         cmd.full = full;
+    if (!cmd.listExtents)
+        cmd.listExtents = false;
 
     var res = this._db.runCommand( cmd );
 
