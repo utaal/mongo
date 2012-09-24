@@ -56,7 +56,7 @@ namespace {
     };
 
     /**
-     * POD class to store various operation parameters to be passed around during analysis.
+     * Simple struct to store various operation parameters to be passed around during analysis.
      */
     struct AnalyzeParams {
         int startOfs;
@@ -95,6 +95,41 @@ namespace {
         void appendToBSONObjBuilder(BSONObjBuilder& b) const;
     };
 
+    struct RecPosInChunks {
+        int firstChunkNum;
+        int lastChunkNum;
+        int endOfFirstChunk;
+        int sizeInFirstChunk;
+        int sizeInLastChunk;
+        int sizeInMiddleChunk;
+        double inFirstChunkRatio;
+        double inLastChunkRatio;
+        double inMiddleChunkRatio;
+
+        static const RecPosInChunks from(int recOfs, int recLen, int extentOfs,
+                                         const AnalyzeParams& config);
+
+        void inChunk(int chunkNum, /*out*/ int& sizeHere, double& ratioHere) {
+            DEV sizeHere = -1;
+            DEV ratioHere = -1;
+            if (chunkNum == firstChunkNum) {
+                sizeHere = sizeInFirstChunk;
+                ratioHere = inFirstChunkRatio;
+                return;
+            }
+            if (chunkNum == lastChunkNum) {
+                sizeHere = sizeInLastChunk;
+                ratioHere = inLastChunkRatio;
+                return;
+            }
+            DEV verify(firstChunkNum < chunkNum && chunkNum < lastChunkNum);
+            sizeHere = sizeInMiddleChunk;
+            ratioHere = inMiddleChunkRatio;
+            DEV verify(sizeHere >= 0 && ratioHere >= 0);
+        }
+    };
+
+
     // Command
 
     class StorageDetailsCmd : public Command {
@@ -121,6 +156,9 @@ namespace {
 
         bool analyzeMemInCore(const Extent* ex, AnalyzeParams& params,
                               string& errmsg, BSONObjBuilder& result);
+
+        bool extractCharactFieldValue(BSONObj& obj, const string& charactField,
+                                      bool charactFieldIsObjId, time_t now, double& value);
 
         /**
          * Entry point, parses command parameters and invokes runInternal.
@@ -163,22 +201,73 @@ namespace {
         b.append("bsonSize", bsonSize);
         b.append("recSize", recSize);
         b.append("onDiskSize", onDiskSize);
-        b.append("charactSum", charactSum);
-        b.append("charactCount", (double) charactCount);
+        if (charactCount > 0) {
+            b.append("charactSum", charactSum);
+            b.append("charactCount", (double) charactCount);
+        }
+    }
+
+    const RecPosInChunks RecPosInChunks::from(int recOfs, int recLen, int extentOfs,
+                                              const AnalyzeParams& config) {
+        RecPosInChunks res;
+        res.firstChunkNum = (recOfs - extentOfs - config.startOfs) / config.granularity;
+        res.lastChunkNum = (recOfs + recLen - extentOfs - config.startOfs) /
+                           config.granularity;
+        res.endOfFirstChunk = (res.firstChunkNum + 1) * config.granularity + config.startOfs +
+                              extentOfs;
+        res.sizeInFirstChunk = min(res.endOfFirstChunk - recOfs, recLen);
+        res.sizeInLastChunk = recLen - res.sizeInFirstChunk -
+                              config.granularity * (res.lastChunkNum - res.firstChunkNum
+                                                    - 1);
+        res.sizeInMiddleChunk = config.granularity;
+        if (res.sizeInLastChunk < 0) {
+            res.sizeInLastChunk = 0;
+        }
+        res.inFirstChunkRatio = (double) res.sizeInFirstChunk / recLen;
+        res.inLastChunkRatio = (double) res.sizeInLastChunk / recLen;
+        res.inMiddleChunkRatio = (double) res.sizeInMiddleChunk / recLen;
+        return res;
     }
 
     bool StorageDetailsCmd::analyzeDiskStorage(const Extent* ex, AnalyzeParams& params,
                                                string& errmsg, BSONObjBuilder& result) {
+        time_t now = time(NULL);
         vector<DiskStorageData> chunkData(params.numberOfChunks,
                                           DiskStorageData(params.granularity));
         chunkData[params.numberOfChunks - 1].onDiskSize = params.lastChunkLength;
         Record* r;
+        int extentOfs = ex->myLoc.getOfs();
         for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) {
             killCurrentOp.checkForInterrupt();
             r = dl.rec();
-            //TODO(andrea.lattuada) do actual work
-            errmsg = "not implemented";
-            return false;
+            BSONObj obj = dl.obj();
+            int recSize = r->lengthWithHeaders();
+            double charactFieldValue;
+            bool hasCharactField = extractCharactFieldValue(obj, params.charactField,
+                                                            params.charactFieldIsObjId, now,
+                                                            charactFieldValue);
+            RecPosInChunks pos = RecPosInChunks::from(dl.getOfs(), recSize, extentOfs, params);
+            for (int chunkNum = pos.firstChunkNum; chunkNum <= pos.lastChunkNum; ++chunkNum) {
+                if (chunkNum < 0) { // the record starts before the beginning of the requested
+                                    // offset ranage
+                    continue;
+                }
+                if (chunkNum >= params.numberOfChunks) { // the records ends after the end of the
+                                                         // requested offset range
+                    break;
+                }
+                DiskStorageData& chunk = chunkData.at(chunkNum);
+                int sizeHere;
+                double ratioHere;
+                pos.inChunk(chunkNum, sizeHere, ratioHere);
+                chunk.numEntries += ratioHere;
+                chunk.recSize += sizeHere;
+                chunk.bsonSize += ratioHere * obj.objsize();
+                if (hasCharactField) {
+                    chunk.charactCount += ratioHere;
+                    chunk.charactSum += ratioHere * charactFieldValue;
+                }
+            }
         }
 
         BSONObjBuilder extentBuilder (result.subobjStart("extent"));
@@ -205,8 +294,6 @@ namespace {
         size_t pageSize = ProcessInfo::pageSize();
         result.append("pageSize", (int) pageSize);
         char* startAddr = (char*) ex + params.startOfs;
-        // DEV tlog() << "extent starts at " << ex << endl;
-        // DEV tlog() << "start address " << (void*) startAddr << endl;
         BSONObjBuilder extentBuilder(result.subobjStart("extent"));
         BSONArrayBuilder arr(result.subarrayStart("chunks"));
         int chunkLength = params.granularity;
@@ -214,7 +301,7 @@ namespace {
             if (chunk == params.numberOfChunks - 1) {
                 chunkLength = params.lastChunkLength;
             }
-            int pagesInChunk = ceilDiv(chunkLength, pageSize);
+            int pagesInChunk = ceilingDiv(chunkLength, pageSize);
             DEV tlog() << "pages in chunk # " << chunk << ": " << pagesInChunk << endl;
             int inMemCount = 0;
             for (int page = 0; page < pagesInChunk; ++page) {
@@ -232,6 +319,26 @@ namespace {
         arr.done();
         extentBuilder.done();
         return true;
+    }
+
+    bool StorageDetailsCmd::extractCharactFieldValue(BSONObj& obj, const string& charactField,
+                                                     bool charactFieldIsObjId, time_t now,
+                                                     double& value) {
+        BSONElement elem = obj.getFieldDotted(charactField);
+        if (elem.eoo()) {
+            return false;
+        }
+        bool hasval = false;
+        if (charactFieldIsObjId) {
+            OID oid = elem.OID();
+            value = now - oid.asTimeT();
+            hasval = true;
+        }
+        else if (elem.isNumber()) {
+            value = elem.numberDouble();
+            hasval = true;
+        }
+        return hasval;
     }
 
     const Extent* StorageDetailsCmd::getExtentNum(int extentNum, const NamespaceDetails* nsd) {
@@ -335,7 +442,7 @@ namespace {
             params.granularity = (params.endOfs - params.startOfs + params.numberOfChunks
                                   - 1) / params.numberOfChunks;
         }
-        params.numberOfChunks = ceilDiv(params.length, params.granularity);
+        params.numberOfChunks = ceilingDiv(params.length, params.granularity);
         params.lastChunkLength = params.length -
                 (params.granularity * (params.numberOfChunks - 1));
         DEV tlog() << "this extent or part of extent (" << params.length << " bytes)"
