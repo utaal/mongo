@@ -24,7 +24,7 @@ namespace mongoutils {
      *         point
      * NOTE: may overflow without warning, use with caution
      */
-    inline unsigned ceilDiv(unsigned dividend, unsigned divisor) {
+    inline unsigned ceilingDiv(unsigned dividend, unsigned divisor) {
         return (dividend + divisor - 1) / divisor;
     }
 
