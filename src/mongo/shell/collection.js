@@ -434,9 +434,32 @@ DBCollection.prototype.storageDetails = function(opt) {
     if (typeof(opt) == 'object') // support arbitrary options here
         Object.extend(cmd, opt);
 
-    var res = this._db.runCommand( cmd );
+    if (cmd.allExtents) {
+        var stats = this.stats();
+        if (cmd.numberOfChunks) {
+            cmd.granularity = Math.ceil(stats.storageSize / cmd.numberOfChunks);
+            delete cmd.numberOfChunks;
+        }
 
-    return res;
+        var result = {
+            extents: []
+        };
+        for (var extentNum = 0; extentNum < stats.numExtents; ++extentNum) {
+            cmd.extent = extentNum;
+            var cmdRes = this._db.runCommand(cmd);
+            if (cmdRes.ok) {
+                result.extents.push(cmdRes.extent);
+            } else {
+                result.ok = false;
+                result.errmsg = cmdRes.errmsg;
+                return result;
+            }
+        }
+        return result;
+    }
+
+    var result = this._db.runCommand(cmd);
+    return result;
 }
 
 DBCollection.prototype.getShardVersion = function(){
