@@ -98,6 +98,25 @@ namespace {
         void appendToBSONObjBuilder(BSONObjBuilder& b) const;
     };
 
+    /**
+     * Helper to calculate which chunks the current record overlaps and how much of the record
+     * is in each of them.
+     * E.g.
+     *                 3.5M      4M     4.5M      5M      5.5M       6M
+     *     chunks ->    |   12   |   13   |   14   |   15   |   16   |
+     *     record ->         [-------- 1.35M --------]   
+     *
+     * results in something like:
+     *     firstChunkNum = 12
+     *     lastChunkNum = 15
+     *     endOfFirstChunk = 4M (4 000 000)
+     *     sizeInFirstChunk = 0.25M
+     *     sizeInLastChunk = 0.10M
+     *     sizeInMiddleChunk = 0.5M (== size of chunk)
+     *     inFirstChunkRatio = 0.25M / 1.35M = 0.185...
+     *     inLastChunkRatio = 0.10M / 1.35M = 0.074...
+     *     inMiddleChunkRatio = 0.5M / 1.35M = 0.37...
+     */
     struct RecPosInChunks {
         int firstChunkNum;
         int lastChunkNum;
@@ -109,9 +128,22 @@ namespace {
         double inLastChunkRatio;
         double inMiddleChunkRatio;
 
+        /**
+         * Calculate position of record TODO:rispettoaTODO chunks.
+         * @param recOfs record offset as reported by DiskLoc
+         * @param recLen record on-disk size with headers included
+         * @param extentOfs extent offset as reported by DiskLoc
+         * @param params operation parameters (see AnalyzeParams for details)
+         */
         static const RecPosInChunks from(int recOfs, int recLen, int extentOfs,
-                                         const AnalyzeParams& config);
+                                         const AnalyzeParams& params);
 
+        /**
+         * Calculate which part of the record belongs to the chunk.
+         * @param chunkNum chunk number
+         * @param sizeHere out: number of bytes of the record belonging to the chunk <numChunk>
+         * @param ratioHere out: sizeHere / total record size
+         */
         void inChunk(int chunkNum, /*out*/ int& sizeHere, double& ratioHere) {
             DEV sizeHere = -1;
             DEV ratioHere = -1;
@@ -135,6 +167,10 @@ namespace {
 
     // Command
 
+    /**
+     * This command provides detailed and aggreate information regarding record and deleted record
+     * layout in storage files and in memory.
+     */
     class StorageDetailsCmd : public Command {
     public:
         StorageDetailsCmd() : Command( "storageDetails" ) {}
@@ -145,8 +181,8 @@ namespace {
 
         virtual void help(stringstream& h) const { h << "TODO. Slow."; }
 
+        //TODO(andrea.lattuada) verify this is enough
         virtual LockType locktype() const { return READ; }
-        //{ validate: "collectionnamewithoutthedbpart" [, scandata: <bool>] [, full: <bool> } */
 
     private:
         /**
