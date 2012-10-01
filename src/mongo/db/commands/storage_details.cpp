@@ -68,10 +68,11 @@ namespace {
         string charactField;
         //TODO(andrea.lattuada) rename to charactFieldIsStdObjId and explain
         bool charactFieldIsObjId;
+        bool showRecords;
 
         AnalyzeParams() : startOfs(0), endOfs(INT_MAX), length(INT_MAX), numberOfChunks(-1),
                           granularity(-1), lastChunkLength(0), charactField("_id"),
-                          charactFieldIsObjId(true) {
+                          charactFieldIsObjId(true), showRecords(false) {
         }
     };
 
@@ -162,6 +163,16 @@ namespace {
         bool extractCharactFieldValue(BSONObj& obj, const string& charactField,
                                       bool charactFieldIsObjId, time_t now, double& value);
 
+        void processRecord(const DiskLoc& dl, const Record* r, int extentOfs,
+                           const AnalyzeParams& params, time_t now,
+                           vector<DiskStorageData>& chunkData,
+                           BSONArrayBuilder* recordsArrayBuilder);
+
+        void processDeletedRecord(const DiskLoc& dl, const DeletedRecord* dr, const Extent* ex,
+                                  const AnalyzeParams& params, int bucketNum,
+                                  vector<DiskStorageData>& chunkData,
+                                  BSONArrayBuilder* deletedRecordsArrayBuilder);
+
         /**
          * Entry point, parses command parameters and invokes runInternal.
          */
@@ -240,92 +251,69 @@ namespace {
     bool StorageDetailsCmd::analyzeDiskStorage(const NamespaceDetails* nsd, const Extent* ex,
                                                AnalyzeParams& params, string& errmsg,
                                                BSONObjBuilder& result) {
+        result.append("extentHeaderSize", Extent::HeaderSize());
+        result.append("recordHeaderSize", Record::HeaderSize);
+        result.append("range", BSON_ARRAY(params.startOfs << params.endOfs));
+
         time_t now = time(NULL);
         vector<DiskStorageData> chunkData(params.numberOfChunks,
                                           DiskStorageData(params.granularity));
         chunkData[params.numberOfChunks - 1].onDiskSize = params.lastChunkLength;
         Record* r;
         int extentOfs = ex->myLoc.getOfs();
-        for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) {
-            killCurrentOp.checkForInterrupt();
-            r = dl.rec();
-            BSONObj obj = dl.obj();
-            int recSize = r->lengthWithHeaders();
-            double charactFieldValue;
-            bool hasCharactField = extractCharactFieldValue(obj, params.charactField,
-                                                            params.charactFieldIsObjId, now,
-                                                            charactFieldValue);
-            RecPosInChunks pos = RecPosInChunks::from(dl.getOfs(), recSize, extentOfs, params);
-            for (int chunkNum = pos.firstChunkNum; chunkNum <= pos.lastChunkNum; ++chunkNum) {
-                if (chunkNum < 0) { // the record starts before the beginning of the requested
-                                    // offset ranage
-                    continue;
-                }
-                if (chunkNum >= params.numberOfChunks) { // the records ends after the end of the
-                                                         // requested offset range
-                    break;
-                }
-                DiskStorageData& chunk = chunkData.at(chunkNum);
-                int sizeHere;
-                double ratioHere;
-                pos.inChunk(chunkNum, sizeHere, ratioHere);
-                chunk.numEntries += ratioHere;
-                chunk.recSize += sizeHere;
-                chunk.bsonSize += ratioHere * obj.objsize();
-                if (hasCharactField) {
-                    chunk.charactCount += ratioHere;
-                    chunk.charactSum += ratioHere * charactFieldValue;
-                }
+
+        { // ensure done() is called by invoking destructor when done with the builder
+            scoped_ptr<BSONArrayBuilder> recordsArrayBuilder(NULL);
+            if (params.showRecords) {
+                recordsArrayBuilder.reset(new BSONArrayBuilder(result.subarrayStart("records")));
+            }
+
+            for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) {
+                killCurrentOp.checkForInterrupt();
+                r = dl.rec();
+
+                processRecord(dl, r, extentOfs, params, now, chunkData, recordsArrayBuilder.get());
             }
         }
 
-        //TODO(andrea.lattuada) refactor
-        if (nsd->isCapped()) {
+        { // ensure done() is called by invoking destructor when done with the builder
+            scoped_ptr<BSONArrayBuilder> deletedRecordsArrayBuilder(NULL);
+            if (params.showRecords) {
+                deletedRecordsArrayBuilder.reset(
+                        new BSONArrayBuilder(result.subarrayStart("deletedRecords")));
+            }
 
-        }
-        else {
-            for (int bucketNum = 0; bucketNum < mongo::Buckets; bucketNum++) {
-                DiskLoc dl = nsd->deletedList[bucketNum];
-                while (!dl.isNull()) {
-                    DeletedRecord* dr = dl.drec();
-                    if (dl.a() == ex->myLoc.a() && dl.getOfs() >= extentOfs &&
-                            dl.getOfs() < extentOfs + ex->length) {
-
-                        RecPosInChunks pos = RecPosInChunks::from(dl.getOfs(), dr->lengthWithHeaders(),
-                                                                  extentOfs, params);
-                        for (int chunkNum = pos.firstChunkNum; chunkNum <= pos.lastChunkNum; ++chunkNum) {
-                            if (chunkNum < 0) { // the record starts before the beginning of the requested
-                                                // offset ranage
-                                continue;
-                            }
-                            if (chunkNum >= params.numberOfChunks) { // the records ends after the end of the
-                                                                     // requested offset range
-                                break;
-                            }
-                            DiskStorageData& chunk = chunkData.at(chunkNum);
-                            int sizeHere;
-                            double ratioHere;
-                            pos.inChunk(chunkNum, sizeHere, ratioHere);
-                            chunk.freeRecords.at(bucketNum) += ratioHere;
-                        }
+            //TODO(andrea.lattuada) refactor
+            if (nsd->isCapped()) {
+                errmsg = "capped collections are not supported";
+                return false;
+            }
+            else {
+                for (int bucketNum = 0; bucketNum < mongo::Buckets; bucketNum++) {
+                    DiskLoc dl = nsd->deletedList[bucketNum];
+                    DeletedRecord* dr;
+                    for (; !dl.isNull(); dl = dr->nextDeleted()) {
+                        dr = dl.drec();
+                        processDeletedRecord(dl, dr, ex, params, bucketNum, chunkData,
+                                             deletedRecordsArrayBuilder.get());
                     }
-                    dl = dr->nextDeleted();
                 }
             }
         }
 
-        BSONArrayBuilder chunkArrayBuilder (result.subarrayStart("chunks"));
         DiskStorageData extentData(0);
-        for (vector<DiskStorageData>::iterator it = chunkData.begin();
-             it != chunkData.end(); ++it) {
+        {
+            BSONArrayBuilder chunkArrayBuilder (result.subarrayStart("chunks"));
+            for (vector<DiskStorageData>::iterator it = chunkData.begin();
+                 it != chunkData.end(); ++it) {
 
-            killCurrentOp.checkForInterrupt();
-            extentData += *it;
-            BSONObjBuilder chunkBuilder;
-            it->appendToBSONObjBuilder(chunkBuilder);
-            chunkArrayBuilder.append(chunkBuilder.obj());
+                killCurrentOp.checkForInterrupt();
+                extentData += *it;
+                BSONObjBuilder chunkBuilder;
+                it->appendToBSONObjBuilder(chunkBuilder);
+                chunkArrayBuilder.append(chunkBuilder.obj());
+            }
         }
-        chunkArrayBuilder.done();
         extentData.appendToBSONObjBuilder(result);
         return true;
     }
@@ -336,6 +324,7 @@ namespace {
         size_t pageSize = ProcessInfo::pageSize();
         result.append("pageSize", (int) pageSize);
         char* startAddr = (char*) ex + params.startOfs;
+
         BSONObjBuilder extentBuilder(result.subobjStart("extent"));
         BSONArrayBuilder arr(result.subarrayStart("chunks"));
         int chunkLength = params.granularity;
@@ -360,6 +349,7 @@ namespace {
         }
         arr.done();
         extentBuilder.done();
+
         return true;
     }
 
@@ -395,6 +385,95 @@ namespace {
             return NULL;
         }
         return ex;
+    }
+
+    void StorageDetailsCmd::processDeletedRecord(const DiskLoc& dl, const DeletedRecord* dr,
+                                                 const Extent* ex, const AnalyzeParams& params,
+                                                 int bucketNum,
+                                                 vector<DiskStorageData>& chunkData,
+                                                 BSONArrayBuilder* deletedRecordsArrayBuilder) {
+        int extentOfs = ex->myLoc.getOfs();
+
+        if (! (dl.a() == ex->myLoc.a() &&
+               dl.getOfs() + dr->lengthWithHeaders() >= extentOfs &&
+               dl.getOfs() < extentOfs + ex->length) ) {
+
+            return;
+        }
+        
+
+        RecPosInChunks pos = RecPosInChunks::from(dl.getOfs(), dr->lengthWithHeaders(),
+                                                  extentOfs, params);
+        for (int chunkNum = pos.firstChunkNum; chunkNum <= pos.lastChunkNum; ++chunkNum) {
+            if (chunkNum < 0) { // the record starts before the beginning of the requested
+                                // offset ranage
+                continue;
+            }
+            if (chunkNum >= params.numberOfChunks) { // the records ends after the end of the
+                                                     // requested offset range
+                break;
+            }
+            DiskStorageData& chunk = chunkData.at(chunkNum);
+            int sizeHere;
+            double ratioHere;
+            pos.inChunk(chunkNum, sizeHere, ratioHere);
+            chunk.freeRecords.at(bucketNum) += ratioHere;
+        }
+
+        if (deletedRecordsArrayBuilder != NULL) {
+            BSONObjBuilder(deletedRecordsArrayBuilder->subobjStart())
+                .append("ofs", dl.getOfs() - extentOfs)
+                .append("diskSize", dr->lengthWithHeaders());
+        }
+    }
+
+    void StorageDetailsCmd::processRecord(const DiskLoc& dl, const Record* r, int extentOfs,
+                                          const AnalyzeParams& params, time_t now,
+                                          vector<DiskStorageData>& chunkData,
+                                          BSONArrayBuilder* recordsArrayBuilder) {
+        BSONObj obj = dl.obj();
+        int recSize = r->lengthWithHeaders();
+        double charactFieldValue;
+        bool hasCharactField = extractCharactFieldValue(obj, params.charactField,
+                                                        params.charactFieldIsObjId, now,
+                                                        charactFieldValue);
+        RecPosInChunks pos = RecPosInChunks::from(dl.getOfs(), recSize, extentOfs, params);
+        bool touchesRequestedArea = false;
+        for (int chunkNum = pos.firstChunkNum; chunkNum <= pos.lastChunkNum; ++chunkNum) {
+            if (chunkNum < 0) { // the record starts before the beginning of the requested
+                                // offset ranage
+                continue;
+            }
+            if (chunkNum >= params.numberOfChunks) { // the records ends after the end of the
+                                                     // requested offset range
+                break;
+            }
+            touchesRequestedArea = true;
+            DiskStorageData& chunk = chunkData.at(chunkNum);
+            int sizeHere;
+            double ratioHere;
+            pos.inChunk(chunkNum, sizeHere, ratioHere);
+            chunk.numEntries += ratioHere;
+            chunk.recSize += sizeHere;
+            chunk.bsonSize += ratioHere * obj.objsize();
+            if (hasCharactField) {
+                chunk.charactCount += ratioHere;
+                chunk.charactSum += ratioHere * charactFieldValue;
+            }
+        }
+
+        if (recordsArrayBuilder != NULL && touchesRequestedArea) {
+            BSONObjBuilder recordBuilder(recordsArrayBuilder->subobjStart());
+            recordBuilder.append("ofs", dl.getOfs() - extentOfs);
+            recordBuilder.append("diskSize", recSize);
+            recordBuilder.append("bsonSize", obj.objsize());
+            BSONElement objIDElm;
+            obj.getObjectID(objIDElm);
+            recordBuilder.append("id", objIDElm.OID().toString());
+            if (hasCharactField) {
+                recordBuilder.append("charact", charactFieldValue);
+            }
+        }
     }
 
     bool StorageDetailsCmd::run(const string& dbname , BSONObj& cmdObj, int, string& errmsg,
@@ -464,10 +543,16 @@ namespace {
         BSONElement charactFieldElm = cmdObj["charactField"];
         if (!charactFieldElm.eoo()) {
             params.charactField = std::string(charactFieldElm.Obj()["name"].String());
+            params.charactFieldIsObjId = false;
             BSONElement isStdObjIdElm = charactFieldElm.Obj()["isStdObjId"];
             if (!isStdObjIdElm.eoo()) {
                 params.charactFieldIsObjId = isStdObjIdElm.Bool();
             }
+        }
+
+        BSONElement showRecsElm = cmdObj["showRecords"];
+        if (!showRecsElm.eoo() && showRecsElm.Bool()) {
+            params.showRecords = true;
         }
 
         killCurrentOp.checkForInterrupt();
