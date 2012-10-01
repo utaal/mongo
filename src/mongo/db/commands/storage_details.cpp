@@ -104,7 +104,7 @@ namespace {
      * E.g.
      *                 3.5M      4M     4.5M      5M      5.5M       6M
      *     chunks ->    |   12   |   13   |   14   |   15   |   16   |
-     *     record ->         [-------- 1.35M --------]   
+     *     record ->         [-------- 1.35M --------]
      *
      * results in something like:
      *     firstChunkNum = 12
@@ -127,9 +127,10 @@ namespace {
         double inFirstChunkRatio;
         double inLastChunkRatio;
         double inMiddleChunkRatio;
+        int numberOfChunks;
 
         /**
-         * Calculate position of record TODO:rispettoaTODO chunks.
+         * Calculate position of record among chunks.
          * @param recOfs record offset as reported by DiskLoc
          * @param recLen record on-disk size with headers included
          * @param extentOfs extent offset as reported by DiskLoc
@@ -138,29 +139,53 @@ namespace {
         static const RecPosInChunks from(int recOfs, int recLen, int extentOfs,
                                          const AnalyzeParams& params);
 
+        struct Result {
+            int chunkNum;
+            int sizeHere;
+            double ratioHere;
+        };
+
+        int curChunk;
+
+        Result start() {
+            curChunk = max(firstChunkNum, 0);
+            return next();
+        }
+
+        bool hasNext() {
+            return curChunk < numberOfChunks;
+        }
+
         /**
-         * Calculate which part of the record belongs to the chunk.
-         * @param chunkNum chunk number
-         * @param sizeHere out: number of bytes of the record belonging to the chunk <numChunk>
-         * @param ratioHere out: sizeHere / total record size
+         * Calculate position of record among chunks.
+         * @param recOfs record offset as reported by DiskLoc
+         * @param recLen record on-disk size with headers included
+         * @param extentOfs extent offset as reported by DiskLoc
+         * @param params operation parameters (see AnalyzeParams for details)
          */
-        void inChunk(int chunkNum, /*out*/ int& sizeHere, double& ratioHere) {
-            DEV sizeHere = -1;
-            DEV ratioHere = -1;
-            if (chunkNum == firstChunkNum) {
-                sizeHere = sizeInFirstChunk;
-                ratioHere = inFirstChunkRatio;
-                return;
+        Result next() {
+            Result res;
+            res.chunkNum = curChunk;
+            if (curChunk < numberOfChunks) {
+                DEV res.sizeHere = -1;
+                DEV res.ratioHere = -1;
+                if (res.chunkNum == firstChunkNum) {
+                    res.sizeHere = sizeInFirstChunk;
+                    res.ratioHere = inFirstChunkRatio;
+                    return res;
+                }
+                if (res.chunkNum == lastChunkNum) {
+                    res.sizeHere = sizeInLastChunk;
+                    res.ratioHere = inLastChunkRatio;
+                    return res;
+                }
+                DEV verify(firstChunkNum < res.chunkNum && res.chunkNum < lastChunkNum);
+                res.sizeHere = sizeInMiddleChunk;
+                res.ratioHere = inMiddleChunkRatio;
+                DEV verify(res.sizeHere >= 0 && res.ratioHere >= 0 && res.ratioHere <= 1);
             }
-            if (chunkNum == lastChunkNum) {
-                sizeHere = sizeInLastChunk;
-                ratioHere = inLastChunkRatio;
-                return;
-            }
-            DEV verify(firstChunkNum < chunkNum && chunkNum < lastChunkNum);
-            sizeHere = sizeInMiddleChunk;
-            ratioHere = inMiddleChunkRatio;
-            DEV verify(sizeHere >= 0 && ratioHere >= 0 && ratioHere <= 1);
+            ++curChunk;
+            return res;
         }
     };
 
@@ -265,6 +290,7 @@ namespace {
     const RecPosInChunks RecPosInChunks::from(int recOfs, int recLen, int extentOfs,
                                               const AnalyzeParams& config) {
         RecPosInChunks res;
+        res.numberOfChunks = config.numberOfChunks;
         res.firstChunkNum = (recOfs - extentOfs - config.startOfs) / config.granularity;
         res.lastChunkNum = (recOfs + recLen - extentOfs - config.startOfs) /
                            config.granularity;
@@ -440,20 +466,11 @@ namespace {
 
         RecPosInChunks pos = RecPosInChunks::from(dl.getOfs(), dr->lengthWithHeaders(),
                                                   extentOfs, params);
-        for (int chunkNum = pos.firstChunkNum; chunkNum <= pos.lastChunkNum; ++chunkNum) {
-            if (chunkNum < 0) { // the record starts before the beginning of the requested
-                                // offset ranage
-                continue;
-            }
-            if (chunkNum >= params.numberOfChunks) { // the records ends after the end of the
-                                                     // requested offset range
-                break;
-            }
-            DiskStorageData& chunk = chunkData.at(chunkNum);
-            int sizeHere;
-            double ratioHere;
-            pos.inChunk(chunkNum, sizeHere, ratioHere);
-            chunk.freeRecords.at(bucketNum) += ratioHere;
+        for (RecPosInChunks::Result curChunk = pos.start(); pos.hasNext();
+             curChunk = pos.next()) {
+
+            DiskStorageData& chunk = chunkData.at(curChunk.chunkNum);
+            chunk.freeRecords.at(bucketNum) += curChunk.ratioHere;
         }
 
         if (deletedRecordsArrayBuilder != NULL) {
@@ -475,26 +492,17 @@ namespace {
                                                         charactFieldValue);
         RecPosInChunks pos = RecPosInChunks::from(dl.getOfs(), recSize, extentOfs, params);
         bool touchesRequestedArea = false;
-        for (int chunkNum = pos.firstChunkNum; chunkNum <= pos.lastChunkNum; ++chunkNum) {
-            if (chunkNum < 0) { // the record starts before the beginning of the requested
-                                // offset ranage
-                continue;
-            }
-            if (chunkNum >= params.numberOfChunks) { // the records ends after the end of the
-                                                     // requested offset range
-                break;
-            }
+        for (RecPosInChunks::Result curChunk = pos.start(); pos.hasNext();
+             curChunk = pos.next()) {
+
             touchesRequestedArea = true;
-            DiskStorageData& chunk = chunkData.at(chunkNum);
-            int sizeHere;
-            double ratioHere;
-            pos.inChunk(chunkNum, sizeHere, ratioHere);
-            chunk.numEntries += ratioHere;
-            chunk.recSize += sizeHere;
-            chunk.bsonSize += ratioHere * obj.objsize();
+            DiskStorageData& chunk = chunkData.at(curChunk.chunkNum);
+            chunk.numEntries += curChunk.ratioHere;
+            chunk.recSize += curChunk.sizeHere;
+            chunk.bsonSize += curChunk.ratioHere * obj.objsize();
             if (hasCharactField) {
-                chunk.charactCount += ratioHere;
-                chunk.charactSum += ratioHere * charactFieldValue;
+                chunk.charactCount += curChunk.ratioHere;
+                chunk.charactSum += curChunk.ratioHere * charactFieldValue;
             }
         }
 
