@@ -153,7 +153,10 @@ namespace {
         }
 
         bool hasNext() {
-            return curChunk < numberOfChunks;
+            bool hasNext = (curChunk < numberOfChunks && curChunk <= lastChunkNum);
+            DEV tlog() << curChunk << " " << numberOfChunks << " " << lastChunkNum << " "
+                       << hasNext << endl;
+            return hasNext;
         }
 
         /**
@@ -164,27 +167,26 @@ namespace {
          * @param params operation parameters (see AnalyzeParams for details)
          */
         Result next() {
+            verify(curChunk <= lastChunkNum && curChunk < numberOfChunks);
             Result res;
             res.chunkNum = curChunk;
-            if (curChunk < numberOfChunks) {
-                DEV res.sizeHere = -1;
-                DEV res.ratioHere = -1;
-                if (res.chunkNum == firstChunkNum) {
-                    res.sizeHere = sizeInFirstChunk;
-                    res.ratioHere = inFirstChunkRatio;
-                    return res;
-                }
-                if (res.chunkNum == lastChunkNum) {
-                    res.sizeHere = sizeInLastChunk;
-                    res.ratioHere = inLastChunkRatio;
-                    return res;
-                }
+            DEV res.sizeHere = -1;
+            DEV res.ratioHere = -1;
+            if (res.chunkNum == firstChunkNum) {
+                res.sizeHere = sizeInFirstChunk;
+                res.ratioHere = inFirstChunkRatio;
+            }
+            else if (res.chunkNum == lastChunkNum) {
+                res.sizeHere = sizeInLastChunk;
+                res.ratioHere = inLastChunkRatio;
+            }
+            else {
                 DEV verify(firstChunkNum < res.chunkNum && res.chunkNum < lastChunkNum);
                 res.sizeHere = sizeInMiddleChunk;
                 res.ratioHere = inMiddleChunkRatio;
-                DEV verify(res.sizeHere >= 0 && res.ratioHere >= 0 && res.ratioHere <= 1);
             }
-            ++curChunk;
+            DEV verify(res.sizeHere >= 0 && res.ratioHere >= 0 && res.ratioHere <= 1);
+            curChunk += 1;
             return res;
         }
     };
@@ -462,12 +464,13 @@ namespace {
 
             return;
         }
-        
 
         RecPosInChunks pos = RecPosInChunks::from(dl.getOfs(), dr->lengthWithHeaders(),
                                                   extentOfs, params);
         for (RecPosInChunks::Result curChunk = pos.start(); pos.hasNext();
              curChunk = pos.next()) {
+
+            killCurrentOp.checkForInterrupt();
 
             DiskStorageData& chunk = chunkData.at(curChunk.chunkNum);
             chunk.freeRecords.at(bucketNum) += curChunk.ratioHere;
@@ -494,6 +497,8 @@ namespace {
         bool touchesRequestedArea = false;
         for (RecPosInChunks::Result curChunk = pos.start(); pos.hasNext();
              curChunk = pos.next()) {
+
+            killCurrentOp.checkForInterrupt();
 
             touchesRequestedArea = true;
             DiskStorageData& chunk = chunkData.at(curChunk.chunkNum);
