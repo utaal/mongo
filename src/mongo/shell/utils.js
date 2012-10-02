@@ -467,7 +467,7 @@ Array.shuffle = function( arr ){
 }
 
 
-Array.tojson = function( a , indent , nolint , plain ){
+Array.tojson = function( a , indent , nolint ){
     var lineEnding = nolint ? " " : "\n";
 
     if (!indent) 
@@ -483,7 +483,7 @@ Array.tojson = function( a , indent , nolint , plain ){
     var s = "[" + lineEnding;
     indent += "\t";
     for ( var i=0; i<a.length; i++){
-        s += indent + tojson( a[i], indent , nolint , plain );
+        s += indent + tojson( a[i], indent , nolint );
         if ( i < a.length - 1 ){
             s += "," + lineEnding;
         }
@@ -563,10 +563,7 @@ if ( ! NumberLong.prototype ) {
     NumberLong.prototype = {}
 }
 
-NumberLong.prototype.tojson = function(plain) {
-    if (plain) {
-        return this.toNumber();
-    }
+NumberLong.prototype.tojson = function() {
     return this.toString();
 }
 
@@ -574,10 +571,7 @@ if ( ! NumberInt.prototype ) {
     NumberInt.prototype = {}
 }
 
-NumberInt.prototype.tojson = function(plain) {
-    if (plain) {
-        return this.toNumber();
-    }
+NumberInt.prototype.tojson = function() {
     return this.toString();
 }
 
@@ -588,10 +582,7 @@ ObjectId.prototype.toString = function(){
     return "ObjectId(" + tojson(this.str) + ")";
 }
 
-ObjectId.prototype.tojson = function(plain){
-    if (plain) {
-        return "\"" + this.valueOf() + "\""; 
-    }
+ObjectId.prototype.tojson = function(){
     return this.toString();
 }
 
@@ -939,11 +930,11 @@ if ( typeof _threadInject != "undefined" ){
     }
 }
 
-tojsononeline = function( x , plain ){
-    return tojson( x , " " , true , plain );
+tojsononeline = function( x ){
+    return tojson( x , " " , true );
 }
 
-tojson = function( x, indent , nolint , plain ){
+tojson = function( x, indent , nolint ){
     if ( x === null )
         return "null";
     
@@ -982,7 +973,7 @@ tojson = function( x, indent , nolint , plain ){
     case "boolean":
         return "" + x;
     case "object":{
-        var s = tojsonObject( x, indent , nolint , plain );
+        var s = tojsonObject( x, indent , nolint );
         if ( ( nolint == null || nolint == true ) && s.length < 80 && ( indent == null || indent.length == 0 ) ){
             s = s.replace( /[\s\r\n ]+/gm , " " );
         }
@@ -996,7 +987,7 @@ tojson = function( x, indent , nolint , plain ){
     
 }
 
-tojsonObject = function( x, indent , nolint , plain ){
+tojsonObject = function( x, indent , nolint ){
     var lineEnding = nolint ? " " : "\n";
     var tabSpace = nolint ? "" : "\t";
     
@@ -1004,13 +995,13 @@ tojsonObject = function( x, indent , nolint , plain ){
 
     if (!indent) 
         indent = "";
-
+    
     if ( typeof( x.tojson ) == "function" && x.tojson != tojson ) {
-        return x.tojson(indent,nolint,plain);
+        return x.tojson(indent,nolint);
     }
     
     if ( x.constructor && typeof( x.constructor.tojson ) == "function" && x.constructor.tojson != tojson ) {
-        return x.constructor.tojson( x, indent , nolint , plain );
+        return x.constructor.tojson( x, indent , nolint );
     }
 
     if ( x.toString() == "[object MaxKey]" )
@@ -1039,7 +1030,7 @@ tojsonObject = function( x, indent , nolint , plain ){
         if ( val == DB.prototype || val == DBCollection.prototype )
             continue;
 
-        s += indent + "\"" + k + "\" : " + tojson( val, indent , nolint , plain );
+        s += indent + "\"" + k + "\" : " + tojson( val, indent , nolint );
         if (num != total) {
             s += ",";
             num++;
