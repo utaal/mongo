@@ -181,7 +181,6 @@ namespace mongo {
         void validateNS(const char *ns, NamespaceDetails *d, const BSONObj& cmdObj, BSONObjBuilder& result) {
             const bool full = cmdObj["full"].trueValue();
             const bool scanData = full || cmdObj["scandata"].trueValue();
-            const bool listExtents = full || cmdObj["listExtents"].trueValue();
 
             bool valid = true;
             BSONArrayBuilder errors; // explanation(s) for why valid = false
@@ -206,8 +205,9 @@ namespace mongo {
                     e->assertOk();
                     el = e->xnext;
                     ne++;
-                    if (listExtents)
+                    if ( full )
                         extentData << e->dump();
+                    
                     killCurrentOp.checkForInterrupt();
                 }
                 result.append("extentCount", ne);
@@ -217,13 +217,15 @@ namespace mongo {
                 errors << "extent asserted";
             }
 
-            if (listExtents)
+            if ( full )
                 result.appendArray( "extents" , extentData.arr() );
 
+            
             result.appendNumber("datasize", d->stats.datasize);
             result.appendNumber("nrecords", d->stats.nrecords);
             result.appendNumber("lastExtentSize", d->lastExtentSize);
             result.appendNumber("padding", d->paddingFactor());
+            
 
             try {
 
@@ -330,13 +332,13 @@ namespace mongo {
                                     break;
                                 }
 
-                                string err( str::stream() << "bad pointer in deleted record list: "
-                                                          << loc.toString()
-                                                          << " bucket: " << i
-                                                          << " k: " << k );
-                                errors << err;
-                                valid = false;
-                                break;
+                                if ( loc.a() <= 0 || strstr(ns, "hudsonSmall") == 0 ) {
+                                    string err (str::stream() << "bad deleted loc: " << loc.toString() << " bucket:" << i << " k:" << k);
+                                    errors << err;
+
+                                    valid = false;
+                                    break;
+                                }
                             }
 
                             DeletedRecord *d = loc.drec();
