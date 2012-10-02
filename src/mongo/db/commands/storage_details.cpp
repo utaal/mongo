@@ -261,17 +261,48 @@ namespace {
         bool analyzeDiskStorage(const NamespaceDetails* nsd, const Extent* ex,
                                 AnalyzeParams& params, string& errmsg, BSONObjBuilder& result);
 
+        /**
+         * Outputs which percentage of pages are in memory for the entire extent and per-chunk.
+         * Refer to analyzeDiskStorage for a description of what chunks are.
+         *
+         * The output has the form:
+         *     { pageSize: <system page size>,
+         *       chunks: [ ... ]
+         *     }
+         *
+         * The nth element in the chunks array is the ratio of pages in memory for the nth chunk.
+         *
+         * @return true on success, false on failure (partial output may still be present)
+         */
         bool analyzeMemInCore(const Extent* ex, AnalyzeParams& params,
                               string& errmsg, BSONObjBuilder& result);
 
+        /**
+         * Extracts the characteristic field from the document, if present and of the right type.
+         * If charactFieldIsObjId is true the field has to have type ObjectId, otherwise it must be
+         * any kind of numeric type.
+         * @param obj the document
+         * @param charactField dotted path to the characteristic field inside the document
+         * @param charactFieldIsObjId if true, the charact. field is assumed to be a standard
+         *                            object id
+         * @param now time when analysis started
+         * @param value out: characteristic field value, only valid if true is returned
+         * @return true if field was correctly extracted, false otherwise (missing or of wrong type)
+         */
         bool extractCharactFieldValue(BSONObj& obj, const string& charactField,
                                       bool charactFieldIsObjId, time_t now, double& value);
 
+        /**
+         * analyzeDiskStorage helper which processes a single record.
+         */
         void processRecord(const DiskLoc& dl, const Record* r, int extentOfs,
                            const AnalyzeParams& params, time_t now,
                            vector<DiskStorageData>& chunkData,
                            BSONArrayBuilder* recordsArrayBuilder);
 
+        /**
+         * analyzeDiskStorage helper which processes a single record.
+         */
         void processDeletedRecord(const DiskLoc& dl, const DeletedRecord* dr, const Extent* ex,
                                   const AnalyzeParams& params, int bucketNum,
                                   vector<DiskStorageData>& chunkData,
@@ -477,7 +508,6 @@ namespace {
         result.append("pageSize", (int) pageSize);
         char* startAddr = (char*) ex + params.startOfs;
 
-        BSONObjBuilder extentBuilder(result.subobjStart("extent"));
         BSONArrayBuilder arr(result.subarrayStart("chunks"));
         int chunkLength = params.granularity;
         for (int chunk = 0; chunk < params.numberOfChunks; ++chunk) {
@@ -500,7 +530,6 @@ namespace {
             arr.append((double) inMemCount / pagesInChunk);
         }
         arr.done();
-        extentBuilder.done();
 
         return true;
     }
