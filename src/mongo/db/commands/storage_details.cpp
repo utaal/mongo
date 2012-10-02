@@ -149,7 +149,7 @@ namespace {
         static const RecPos from(int recOfs, int recLen, int extentOfs,
                                          const AnalyzeParams& params);
 
-        // See RecPos class description and ChunkIterator::get()
+        // See RecPos class description
         struct ChunkInfo {
             int chunkNum;
             int sizeHere;
@@ -584,8 +584,8 @@ namespace {
         RecPos pos = RecPos::from(dl.getOfs(), recSize, extentOfs, params);
         bool spansRequestedArea = false;
         for (RecPos::ChunkIterator it = pos.iterateChunks(); !it.end(); ++it) {
-
             killCurrentOp.checkForInterrupt();
+
             spansRequestedArea = true;
             DiskStorageData& chunk = chunkData.at(it->chunkNum);
             chunk.numEntries += it->ratioHere;
