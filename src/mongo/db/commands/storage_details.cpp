@@ -116,8 +116,18 @@ namespace {
      *     inFirstChunkRatio = 0.25M / 1.35M = 0.185...
      *     inLastChunkRatio = 0.10M / 1.35M = 0.074...
      *     inMiddleChunkRatio = 0.5M / 1.35M = 0.37...
+     *
+     * The quasi-iterator ChunkIterator is available to easily iterate over the chunks spanned
+     * by the record and to obtain how much of the records belongs to each.
+     *
+     *    for (RecPos::ChunkIterator it = pos.iterateChunks(); !it.end(); ++it) {
+     *        RecPos::ChunkInfo res = *it;
+     *        // res contains the current chunk number, the number of bytes belonging to the current
+     *        // chunk, and the ratio with the full size of the record
+     *    }
      */
-    struct RecPosInChunks {
+    struct RecPos {
+        bool outOfRange;
         int firstChunkNum;
         int lastChunkNum;
         int endOfFirstChunk;
@@ -136,57 +146,38 @@ namespace {
          * @param extentOfs extent offset as reported by DiskLoc
          * @param params operation parameters (see AnalyzeParams for details)
          */
-        static const RecPosInChunks from(int recOfs, int recLen, int extentOfs,
+        static const RecPos from(int recOfs, int recLen, int extentOfs,
                                          const AnalyzeParams& params);
 
-        struct Result {
+        // See RecPos class description
+        struct ChunkInfo {
             int chunkNum;
             int sizeHere;
             double ratioHere;
         };
 
-        int curChunk;
-
-        Result start() {
-            curChunk = max(firstChunkNum, 0);
-            return next();
-        }
-
-        bool hasNext() {
-            return curChunk < numberOfChunks;
-        }
-
         /**
-         * Calculate position of record among chunks.
-         * @param recOfs record offset as reported by DiskLoc
-         * @param recLen record on-disk size with headers included
-         * @param extentOfs extent offset as reported by DiskLoc
-         * @param params operation parameters (see AnalyzeParams for details)
+         * Iterates over chunks spanned by the record.
          */
-        Result next() {
-            Result res;
-            res.chunkNum = curChunk;
-            if (curChunk < numberOfChunks) {
-                DEV res.sizeHere = -1;
-                DEV res.ratioHere = -1;
-                if (res.chunkNum == firstChunkNum) {
-                    res.sizeHere = sizeInFirstChunk;
-                    res.ratioHere = inFirstChunkRatio;
-                    return res;
-                }
-                if (res.chunkNum == lastChunkNum) {
-                    res.sizeHere = sizeInLastChunk;
-                    res.ratioHere = inLastChunkRatio;
-                    return res;
-                }
-                DEV verify(firstChunkNum < res.chunkNum && res.chunkNum < lastChunkNum);
-                res.sizeHere = sizeInMiddleChunk;
-                res.ratioHere = inMiddleChunkRatio;
-                DEV verify(res.sizeHere >= 0 && res.ratioHere >= 0 && res.ratioHere <= 1);
+        class ChunkIterator {
+        public:
+            ChunkIterator(RecPos& pos) : _pos(pos), _fresh(false) {
+                _curChunk.chunkNum = pos.firstChunkNum >= 0 ? _pos.firstChunkNum : 0;
             }
-            ++curChunk;
-            return res;
-        }
+
+            bool end() const;
+
+            ChunkInfo* operator->();
+
+            ChunkIterator& operator++();
+
+        private:
+            RecPos& _pos;
+            ChunkInfo _curChunk;
+            bool _fresh;
+        };
+
+        ChunkIterator iterateChunks();
     };
 
 
@@ -215,6 +206,58 @@ namespace {
          */
         const Extent* getExtentNum(int extentNum, const NamespaceDetails* nsd);
 
+        /**
+         * Provides aggregate and (if requested) detailed information regarding the layout of
+         * records and deleted records in the extent.
+         * The extent is split in params.numberOfChunks chunks of params.granularity bytes each
+         * (except the last one which could be shorter).
+         * Iteration is performed over all records and deleted records in the specified (part of)
+         * extent and the output contains aggregate information for the entire record and per-chunk.
+         * The typical output has the form:
+         *
+         *     { extentHeaderSize: <size>,
+         *       recordHeaderSize: <size>,
+         *       range: [startOfs, endOfs],
+         *       numEntries: <number of records>,
+         *       bsonSize: <total size of the bson objects>,
+         *       recSize: <total size of the valid records>,
+         *       onDiskSize: <length of the extent or range>,
+         * (opt) charactCount: <number of records containing the field used to characterize them>
+         *       charactSum: <sum of the values of the characteristic field>
+         *       freeRecsPerBucket: [ ... ],
+         * The nth element in the freeRecsPerBucket array is the count of deleted records in the
+         * nth bucket of the deletedList.
+         * The characteristic field is specified in params.charactField and may or may not be
+         * a standard object id (params.charactFieldIsObjId.
+         *
+         * The list of chunks follows, with similar information aggregated per-chunk:
+         *       chunks: [
+         *           { numEntries: <number of records>,
+         *             ...
+         *             freeRecsPerBucket: [ ... ]
+         *           },
+         *           ...
+         *       ]
+         *     }
+         *
+         * If params.showRecords is set two additional fields are added to the outer document:
+         *       records: [
+         *           { ofs: <record offset from start of extent>,
+         *             recSize: <record size>,
+         *             bsonSize: <bson document size>,
+         *  (optional) charact: <value of the characteristic field>
+         *           }, 
+         *           ... (one element per record)
+         *       ],
+         *       deletedRecords: [
+         *           { ofs: <offset from start of extent>,
+         *             recSize: <deleted record size>
+         *           },
+         *           ... (one element per deleted record)
+         *       ]
+         *
+         * @return true on success, false on failure (partial output may still be present)
+         */
         bool analyzeDiskStorage(const NamespaceDetails* nsd, const Extent* ex,
                                 AnalyzeParams& params, string& errmsg, BSONObjBuilder& result);
 
@@ -287,13 +330,20 @@ namespace {
         b.append("freeRecsPerBucket", freeRecords);
     }
 
-    const RecPosInChunks RecPosInChunks::from(int recOfs, int recLen, int extentOfs,
-                                              const AnalyzeParams& config) {
-        RecPosInChunks res;
+    const RecPos RecPos::from(int recOfs, int recLen, int extentOfs, const AnalyzeParams& config) {
+        RecPos res;
         res.numberOfChunks = config.numberOfChunks;
-        res.firstChunkNum = (recOfs - extentOfs - config.startOfs) / config.granularity;
-        res.lastChunkNum = (recOfs + recLen - extentOfs - config.startOfs) /
-                           config.granularity;
+        int startsAt = recOfs - extentOfs;
+        int endsAt = startsAt + recLen;
+        if (endsAt < config.startOfs || startsAt >= config.endOfs) {
+            res.outOfRange = true;
+            return res;
+        }
+        else {
+            res.outOfRange = false;
+        }
+        res.firstChunkNum = (startsAt - config.startOfs) / config.granularity;
+        res.lastChunkNum = (endsAt - config.startOfs) / config.granularity;
         res.endOfFirstChunk = (res.firstChunkNum + 1) * config.granularity + config.startOfs +
                               extentOfs;
         res.sizeInFirstChunk = min(res.endOfFirstChunk - recOfs, recLen);
@@ -308,6 +358,47 @@ namespace {
         res.inLastChunkRatio = (double) res.sizeInLastChunk / recLen;
         res.inMiddleChunkRatio = (double) res.sizeInMiddleChunk / recLen;
         return res;
+    }
+
+    bool RecPos::ChunkIterator::end() const {
+        return _pos.outOfRange || !(_curChunk.chunkNum < _pos.numberOfChunks &&
+                                    _curChunk.chunkNum <= _pos.lastChunkNum);
+    }
+
+    RecPos::ChunkIterator RecPos::iterateChunks() {
+        return ChunkIterator(*this);
+    }
+
+    RecPos::ChunkInfo* RecPos::ChunkIterator::operator->() {
+        if (!_fresh) {
+            verify(_curChunk.chunkNum < _pos.numberOfChunks &&
+                   _curChunk.chunkNum <= _pos.lastChunkNum);
+            _curChunk.sizeHere = -1;
+            _curChunk.ratioHere = -1;
+            if (_curChunk.chunkNum == _pos.firstChunkNum) {
+                _curChunk.sizeHere = _pos.sizeInFirstChunk;
+                _curChunk.ratioHere = _pos.inFirstChunkRatio;
+            }
+            else if (_curChunk.chunkNum == _pos.lastChunkNum) {
+                _curChunk.sizeHere = _pos.sizeInLastChunk;
+                _curChunk.ratioHere = _pos.inLastChunkRatio;
+            }
+            else {
+                DEV verify(_pos.firstChunkNum < _curChunk.chunkNum &&
+                           _curChunk.chunkNum < _pos.lastChunkNum);
+                _curChunk.sizeHere = _pos.sizeInMiddleChunk;
+                _curChunk.ratioHere = _pos.inMiddleChunkRatio;
+            }
+            verify(_curChunk.sizeHere >= 0 && _curChunk.ratioHere >= 0);
+            _fresh = true;
+        }
+        return &_curChunk;
+    }
+
+    RecPos::ChunkIterator& RecPos::ChunkIterator::operator++() {
+        ++_curChunk.chunkNum;
+        _fresh = false;
+        return *this;
     }
 
     bool StorageDetailsCmd::analyzeDiskStorage(const NamespaceDetails* nsd, const Extent* ex,
@@ -345,7 +436,6 @@ namespace {
                         new BSONArrayBuilder(result.subarrayStart("deletedRecords")));
             }
 
-            //TODO(andrea.lattuada) refactor
             if (nsd->isCapped()) {
                 errmsg = "capped collections are not supported";
                 return false;
@@ -464,19 +554,19 @@ namespace {
         }
         
 
-        RecPosInChunks pos = RecPosInChunks::from(dl.getOfs(), dr->lengthWithHeaders(),
-                                                  extentOfs, params);
-        for (RecPosInChunks::Result curChunk = pos.start(); pos.hasNext();
-             curChunk = pos.next()) {
+        RecPos pos = RecPos::from(dl.getOfs(), dr->lengthWithHeaders(), extentOfs, params);
+        bool spansRequestedArea = false;
+        for (RecPos::ChunkIterator it = pos.iterateChunks(); !it.end(); ++it) {
 
-            DiskStorageData& chunk = chunkData.at(curChunk.chunkNum);
-            chunk.freeRecords.at(bucketNum) += curChunk.ratioHere;
+            DiskStorageData& chunk = chunkData.at(it->chunkNum);
+            chunk.freeRecords.at(bucketNum) += it->ratioHere;
+            spansRequestedArea = true;
         }
 
-        if (deletedRecordsArrayBuilder != NULL) {
+        if (deletedRecordsArrayBuilder != NULL && spansRequestedArea) {
             BSONObjBuilder(deletedRecordsArrayBuilder->subobjStart())
                 .append("ofs", dl.getOfs() - extentOfs)
-                .append("diskSize", dr->lengthWithHeaders());
+                .append("recSize", dr->lengthWithHeaders());
         }
     }
 
@@ -490,26 +580,34 @@ namespace {
         bool hasCharactField = extractCharactFieldValue(obj, params.charactField,
                                                         params.charactFieldIsObjId, now,
                                                         charactFieldValue);
-        RecPosInChunks pos = RecPosInChunks::from(dl.getOfs(), recSize, extentOfs, params);
-        bool touchesRequestedArea = false;
-        for (RecPosInChunks::Result curChunk = pos.start(); pos.hasNext();
-             curChunk = pos.next()) {
 
-            touchesRequestedArea = true;
-            DiskStorageData& chunk = chunkData.at(curChunk.chunkNum);
-            chunk.numEntries += curChunk.ratioHere;
-            chunk.recSize += curChunk.sizeHere;
-            chunk.bsonSize += curChunk.ratioHere * obj.objsize();
+        RecPos pos = RecPos::from(dl.getOfs(), recSize, extentOfs, params);
+        bool spansRequestedArea = false;
+        for (RecPos::ChunkIterator it = pos.iterateChunks(); !it.end(); ++it) {
+            killCurrentOp.checkForInterrupt();
+
+            spansRequestedArea = true;
+            DiskStorageData& chunk = chunkData.at(it->chunkNum);
+            chunk.numEntries += it->ratioHere;
+            chunk.recSize += it->sizeHere;
+            chunk.bsonSize += it->ratioHere * obj.objsize();
             if (hasCharactField) {
-                chunk.charactCount += curChunk.ratioHere;
-                chunk.charactSum += curChunk.ratioHere * charactFieldValue;
+                chunk.charactCount += it->ratioHere;
+                chunk.charactSum += it->ratioHere * charactFieldValue;
             }
         }
 
-        if (recordsArrayBuilder != NULL && touchesRequestedArea) {
+        if (recordsArrayBuilder != NULL && spansRequestedArea) {
+            DEV {
+                int startsAt = dl.getOfs() - extentOfs;
+                int endsAt = startsAt + recSize;
+                verify((startsAt < params.startOfs && endsAt > params.startOfs) ||
+                       (startsAt < params.endOfs && endsAt >= params.endOfs) ||
+                       (startsAt >= params.startOfs && endsAt < params.endOfs));
+            }
             BSONObjBuilder recordBuilder(recordsArrayBuilder->subobjStart());
             recordBuilder.append("ofs", dl.getOfs() - extentOfs);
-            recordBuilder.append("diskSize", recSize);
+            recordBuilder.append("recSize", recSize);
             recordBuilder.append("bsonSize", obj.objsize());
             BSONElement objIDElm;
             obj.getObjectID(objIDElm);
