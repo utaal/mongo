@@ -45,15 +45,17 @@ namespace {
     // Helper classes
 
     /**
-     * Enum-like class to store which subcommand was requested.
+     * Available subcommands.
      */
-    class SubCommand {
-    public:
+    namespace SubCommand {
         static const int diskStorage = 1 << 0;
         static const int memInCore = 1 << 1;
 
+        /**
+         * @return the constant for the subcommand with the same name or 0 if none matches
+         */
         static int fromStr(string& str);
-    };
+    }
 
     /**
      * Simple struct to store various operation parameters to be passed around during analysis.
@@ -66,7 +68,6 @@ namespace {
         int granularity;
         int lastChunkLength;
         string charactField;
-        //TODO(andrea.lattuada) rename to charactFieldIsStdObjId and explain
         bool charactFieldIsObjId;
         bool showRecords;
 
@@ -195,7 +196,10 @@ namespace {
             return true;
         }
 
-        virtual void help(stringstream& h) const { h << "TODO. Slow."; }
+        virtual void help(stringstream& h) const {
+            h << "Provides detailed and aggreate information regarding record and deleted record "
+              << "layout in storage files and in memory. Slow if run with {allExtents: true}.";
+        }
 
         //TODO(andrea.lattuada) verify this is enough
         virtual LockType locktype() const { return READ; }
@@ -328,8 +332,7 @@ namespace {
             return memInCore;
         }
         else {
-            //TODO(andrea.lattuada) throw proper exception
-            verify(false);
+            return 0;
         }
     }
 
@@ -658,6 +661,12 @@ namespace {
         }
         string subCommandStr = analyzeElm.String();
         int subCommand = SubCommand::fromStr(subCommandStr);
+
+        if (subCommand == 0) {
+            errmsg = str::stream() << subCommandStr << " is not a valid subcommand, "
+                                   << "use 'diskStorage' or 'memInCore'";
+            return false;
+        }
 
         string ns = dbname + "." + cmdObj.firstElement().valuestrsafe();
         NamespaceDetails * nsd = nsdetails( ns.c_str() );
