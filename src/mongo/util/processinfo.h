@@ -100,6 +100,13 @@ namespace mongo {
 
         bool supported();
 
+        static bool pageSizeSupported();
+
+        //TODO(andrea.lattuada) should probably be inline for performance reasons
+        //                      this method is now called once for every call to
+        //                      blockInMemory on some platforms
+        static size_t pageSize();
+
         static bool blockCheckSupported();
 
         static bool blockInMemory( char * start );
@@ -149,6 +156,8 @@ namespace mongo {
             }
             return *initSysInfo;
         }
+
+        static size_t _pageSizeInternal;
 
     };
 

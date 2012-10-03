@@ -20,6 +20,7 @@
  */
 
 #include <assert.h>
+#include "math.h"
 #include "str.h"
 #include "html.h"
 
@@ -41,5 +42,14 @@ int main() {
     string x = str::after("abcde", 'c');
     verify( x == "de" );
     verify( str::after("abcde", 'x') == "" );
+
+    // tests for math.h
+    {
+        verify(ceilDiv(11, 13) == 1);
+        verify(ceilDiv(13, 13) == 1);
+        verify(ceilDiv(13 * 3 + 1, 13) == 4);
+        verify(ceilDiv(13 * 4, 13) == 4);
+    }
     return 0;
 }
+
