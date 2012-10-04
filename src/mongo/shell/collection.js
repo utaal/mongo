@@ -429,7 +429,7 @@ DBCollection.prototype.validate = function(full) {
 DBCollection.prototype.indexStats = function(params) {
     var cmd = { indexStats: this.getName() };
 
-    if (typeof(full) == 'object') // support arbitrary options here
+    if (typeof(params) == 'object') // support arbitrary options here
         Object.extend(cmd, params);
 
     return this._db.runCommand( cmd );
