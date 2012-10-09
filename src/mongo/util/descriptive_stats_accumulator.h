@@ -16,53 +16,80 @@
  *    limitations under the License.
  */
 
+#include <boost/accumulators/accumulators.hpp>
+#include <boost/accumulators/statistics/count.hpp>
+#include <boost/accumulators/statistics/density.hpp>
+#include <boost/accumulators/statistics/kurtosis.hpp>
+#include <boost/accumulators/statistics/mean.hpp>
+#include <boost/accumulators/statistics/moment.hpp>
+#include <boost/accumulators/statistics/skewness.hpp>
+#include <boost/accumulators/statistics/stats.hpp>
+#include <boost/accumulators/statistics/variance.hpp>
+
+using namespace boost::accumulators;
+
 namespace mongo {
 
     template <class T>
     class DescAccumul {
     public:
-        DescAccumul(T lower, T upper, int numBins) :
-            _lower(lower), _upper(upper), _numBins(numBins), _bins(numBins), _clipped(false) {
+        DescAccumul(unsigned int numBins, unsigned int densityCache) :
+            _acc(tag::density::cache_size = densityCache, tag::density::num_bins = numBins),
+            _densityCacheToGo(densityCache), _numBins(numBins) {
 
         }
 
-        /*DescAccumul& operator-=(const DescAccumul &rhs);*/
-
-        void put(T x);
-        //void takeOut(T x);
-
-        inline int clippedOver() const {
-            return _clipped;
+        inline void put(T x) {
+            _acc(x);
+            if (_densityCacheToGo > 0) {
+                --_densityCacheToGo;
+            }
         }
-        inline int clippedUnder() const {
-            return _clipped;
+
+        inline bool densityNeedsMore() const {
+            return _densityCacheToGo > 0;
         }
-        T quant(int num) const;
-        inline T density(int num) const { return _bins.at(num); }
+
+
+        // T quant(int num) const;
+        //inline std::vector density(int num) const {
+
         T median() const;
-        inline int count() const { return _count; }
-        inline double mean() const { return _mean; }
-        inline double variance() const { return _variance; }
-        inline T skewness() const { return _skewness; }
-        inline T kurtosis() const { return _kurtosis; }
-        //T moment(int num);
-        //
-    private:
-        inline int binFor(T val) const {
-            return (val - lower) / ((double) (_upper - _lower) / _numBins);
+        inline int count() const { return extract::count(_acc); }
+        inline double mean() const { return extract::mean(_acc); }
+        inline double variance() const { return extract::variance(_acc); }
+        inline double skewness() const { return extract::skewness(_acc); }
+        inline double kurtosis() const { return extract::kurtosis(_acc); }
+
+        BSONObj toBSONObj() const {
+            BSONObjBuilder b;
+            b << "count" << count()
+              << "mean" << mean()
+              << "variance" << variance()
+              << "skewness" << skewness()
+              << "kurtosis" << kurtosis();
+            BSONObjBuilder densityBuilder(b.subobjStart("density"));
+            boost::iterator_range<typename vector<pair<T, int> >::iterator> rng =
+                    extract::density(_acc);
+
+            for (typename vector<pair<T, int> >::iterator it = rng.begin();
+                 it != rng.end();
+                 ++it) {
+
+                densityBuilder << it->first << it->second;
+            }
+            return b.obj();
         }
 
-        T _lower;
-        T _upper;
-        int _numBins;
-        vector<int> _bins;
-        int _clippedOver;
-        int _clippedUnder;
-        int _count;
-        T _mean;
-        T _variance;
-        T _skewness;
-        T _kurtosis;
+    private:
+        accumulator_set<T, stats<tag::count,
+                                 tag::density,
+                                 tag::mean,
+                                 tag::variance,
+                                 tag::kurtosis,
+                                 tag::skewness> > _acc;
+        unsigned int _densityCacheToGo;
+        unsigned int _numBins;
     };
 
 }
