@@ -341,6 +341,7 @@ namespace {
         this->onDiskBytes += rhs.onDiskBytes;
         this->charactSum += rhs.charactSum;
         this->charactCount += rhs.charactCount;
+        verify(freeRecords.size() == rhs.freeRecords.size());
         vector<double>::const_iterator rhsit = rhs.freeRecords.begin();
         for (vector<double>::iterator thisit = this->freeRecords.begin();
                  thisit != this->freeRecords.end(); thisit++, rhsit++) {
@@ -511,10 +512,10 @@ namespace {
     bool StorageDetailsCmd::analyzeMemInCore(const Extent* ex, const AnalyzeParams& params,
                                              string& errmsg, BSONObjBuilder& result) {
         verify(sizeof(char) == 1);
-        result.append("pageBytes", (int) PAGE_SIZE);
+        result.append("pageBytes", int(PAGE_SIZE));
         char* startAddr = (char*) ex + params.startOfs;
 
-        int extentPages = ceilingDiv(params.endOfs - params.startOfs, params.numberOfChunks);
+        int extentPages = ceilingDiv(params.endOfs - params.startOfs, int(PAGE_SIZE));
         int extentInMemCount = 0;
 
         BSONArrayBuilder arr(result.subarrayStart("chunks"));
@@ -542,6 +543,7 @@ namespace {
             arr.append(double(inMemCount) / pagesInChunk);
         }
         arr.done();
+        result.append("inMem", double(extentInMemCount) / extentPages);
 
         return true;
     }
