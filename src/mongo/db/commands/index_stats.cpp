@@ -227,17 +227,19 @@ namespace mongo {
 
     template <class Version>
     bool BtreeInspectorImpl<Version>::inspectBucket(const DiskLoc& dl, int depth, int childNum, bool expandedBranch, list<AreaStats*> branchStats) {
+        if (dl.isNull()) return true;
+
         const BtreeBucket<Version>* bucket = dl.btree<Version>();
+        PRINT("+++");
         int usedKeyCount = 0;
 
         killCurrentOp.checkForInterrupt();
 
-        DEV tlog() << "aa - " << branchStats.size() << endl;
         int keyCount = bucket->getN();
         int childrenCount = keyCount + 1;
 
         if (expandedBranch) {
-            if (_expandNodes[depth] == childNum) {
+            if (depth < _expandNodes.size() && _expandNodes[depth] == childNum) {
                 _stats.newBranchLevel(depth, childrenCount);
             } else {
                 expandedBranch = false;
@@ -254,12 +256,9 @@ namespace mongo {
         }
         this->inspectBucket(bucket->getNextChild(), depth + 1, keyCount, expandedBranch, branchStats);
 
-        DEV tlog() << "aa - " << branchStats.size() << endl;
         if (depth > _stats.depth) _stats.depth = depth;
         for (list<AreaStats*>::iterator it = branchStats.begin(); it != branchStats.end(); ++it) {
-            DEV tlog() << "a " << *it << endl;
             addTo(*it, keyCount, usedKeyCount, bucket, sizeof(_KeyNode));
-            DEV tlog() << "b" << endl;
         }
         while (_stats.perLevel.size() < depth + 1)
             _stats.perLevel.push_back(AreaStats());
