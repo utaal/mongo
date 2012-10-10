@@ -37,12 +37,13 @@
 #include "mongo/db/namespace_details.h"
 #include "mongo/tools/tool.h"
 #include "mongo/util/processinfo.h"
-#include "mongo/util/mongoutils/math.h"
 #include "mongo/util/mongoutils/str.h"
 
 namespace mongo {
 
 namespace {
+
+    static size_t PAGE_SIZE = 4 << 10;
 
     // Helper classes
 
@@ -81,16 +82,16 @@ namespace {
      */
     struct DiskStorageData {
         long double numEntries;
-        long long bsonSize;
-        long long recSize;
-        long long onDiskSize;
+        long long bsonBytes;
+        long long recBytes;
+        long long onDiskBytes;
         double charactSum;
         long double charactCount;
         vector<double> freeRecords;
 
-        DiskStorageData(long long diskSize) : numEntries(0), bsonSize(0), recSize(0),
-                                              onDiskSize(diskSize), charactSum(0), charactCount(0),
-                                              freeRecords(mongo::Buckets, 0) {
+        DiskStorageData(long long diskBytes) : numEntries(0), bsonBytes(0), recBytes(0),
+                                               onDiskBytes(diskBytes), charactSum(0),
+                                               charactCount(0), freeRecords(mongo::Buckets, 0) {
         }
 
         const DiskStorageData& operator += (const DiskStorageData& rhs);
@@ -183,6 +184,9 @@ namespace {
         ChunkIterator iterateChunks();
     };
 
+    inline unsigned ceilingDiv(unsigned dividend, unsigned divisor) {
+        return (dividend + divisor - 1) / divisor;
+    }
 
     // Command
 
@@ -220,20 +224,21 @@ namespace {
          * extent and the output contains aggregate information for the entire record and per-chunk.
          * The typical output has the form:
          *
-         *     { extentHeaderSize: <size>,
-         *       recordHeaderSize: <size>,
+         *     { extentHeaderBytes: <size>,
+         *       recordHeaderBytes: <size>,
          *       range: [startOfs, endOfs],     // extent-relative
          *       numEntries: <number of records>,
-         *       bsonSize: <total size of the bson objects>,
-         *       recSize: <total size of the valid records>,
-         *       onDiskSize: <length of the extent or range>,
+         *       bsonBytes: <total size of the bson objects>,
+         *       recBytes: <total size of the valid records>,
+         *       onDiskBytes: <length of the extent or range>,
          * (opt) charactCount: <number of records containing the field used to characterize them>
-         *       charactSum: <sum of the values of the characteristic field>
+         * (opt) charactSum: <sum of the values of the characteristic field>
+         *       charactAvg: <average value of the characteristic field>
          *       freeRecsPerBucket: [ ... ],
          * The nth element in the freeRecsPerBucket array is the count of deleted records in the
          * nth bucket of the deletedList.
          * The characteristic field is specified in params.charactField and may or may not be
-         * a standard object id (params.charactFieldIsObjId.
+         * a standard object id (params.charactFieldIsObjId).
          *
          * The list of chunks follows, with similar information aggregated per-chunk:
          *       chunks: [
@@ -248,15 +253,15 @@ namespace {
          * If params.showRecords is set two additional fields are added to the outer document:
          *       records: [
          *           { ofs: <record offset from start of extent>,
-         *             recSize: <record size>,
-         *             bsonSize: <bson document size>,
+         *             recBytes: <record size>,
+         *             bsonBytes: <bson document size>,
          *  (optional) charact: <value of the characteristic field>
          *           }, 
          *           ... (one element per record)
          *       ],
          *       deletedRecords: [
          *           { ofs: <offset from start of extent>,
-         *             recSize: <deleted record size>
+         *             recBytes: <deleted record size>
          *           },
          *           ... (one element per deleted record)
          *       ]
@@ -272,7 +277,8 @@ namespace {
          * Refer to analyzeDiskStorage for a description of what chunks are.
          *
          * The output has the form:
-         *     { pageSize: <system page size>,
+         *     { pageBytes: <system page size>,
+         *       inMem: <ratio of pages in memory for the entire extent>,
          *       chunks: [ ... ]
          *     }
          *
@@ -330,9 +336,9 @@ namespace {
 
     const DiskStorageData& DiskStorageData::operator+= (const DiskStorageData& rhs) {
         this->numEntries += rhs.numEntries;
-        this->recSize += rhs.recSize;
-        this->bsonSize += rhs.bsonSize;
-        this->onDiskSize += rhs.onDiskSize;
+        this->recBytes += rhs.recBytes;
+        this->bsonBytes += rhs.bsonBytes;
+        this->onDiskBytes += rhs.onDiskBytes;
         this->charactSum += rhs.charactSum;
         this->charactCount += rhs.charactCount;
         vector<double>::const_iterator rhsit = rhs.freeRecords.begin();
@@ -345,9 +351,9 @@ namespace {
 
     void DiskStorageData::appendToBSONObjBuilder(BSONObjBuilder& b, bool includeFreeRecords) const {
         b.append("numEntries", double(numEntries));
-        b.append("bsonSize", bsonSize);
-        b.append("recSize", recSize);
-        b.append("onDiskSize", onDiskSize);
+        b.append("bsonBytes", bsonBytes);
+        b.append("recBytes", recBytes);
+        b.append("onDiskBytes", onDiskBytes);
         if (charactCount > 0) {
             b.append("charactSum", charactSum);
             b.append("charactCount", (double) charactCount);
@@ -442,14 +448,14 @@ namespace {
                                                BSONObjBuilder& result) {
         bool isCapped = nsd->isCapped();
 
-        result.append("extentHeaderSize", Extent::HeaderSize());
-        result.append("recordHeaderSize", Record::HeaderSize);
+        result.append("extentHeaderBytes", Extent::HeaderSize());
+        result.append("recordHeaderBytes", Record::HeaderSize);
         result.append("range", BSON_ARRAY(params.startOfs << params.endOfs));
         result.append("isCapped", isCapped);
 
         vector<DiskStorageData> chunkData(params.numberOfChunks,
                                           DiskStorageData(params.granularity));
-        chunkData[params.numberOfChunks - 1].onDiskSize = params.lastChunkLength;
+        chunkData[params.numberOfChunks - 1].onDiskBytes = params.lastChunkLength;
         Record* r;
         int extentOfs = ex->myLoc.getOfs();
 
@@ -505,9 +511,11 @@ namespace {
     bool StorageDetailsCmd::analyzeMemInCore(const Extent* ex, const AnalyzeParams& params,
                                              string& errmsg, BSONObjBuilder& result) {
         verify(sizeof(char) == 1);
-        size_t pageSize = ProcessInfo::pageSize();
-        result.append("pageSize", (int) pageSize);
+        result.append("pageBytes", (int) PAGE_SIZE);
         char* startAddr = (char*) ex + params.startOfs;
+
+        int extentPages = ceilingDiv(params.endOfs - params.startOfs, params.numberOfChunks);
+        int extentInMemCount = 0;
 
         BSONArrayBuilder arr(result.subarrayStart("chunks"));
         int chunkLength = params.granularity;
@@ -515,19 +523,20 @@ namespace {
             if (chunk == params.numberOfChunks - 1) {
                 chunkLength = params.lastChunkLength;
             }
-            int pagesInChunk = ceilingDiv(chunkLength, pageSize);
+            int pagesInChunk = ceilingDiv(chunkLength, PAGE_SIZE);
             //TODO: remove
             DEV dlog(LL_DEBUG) << "pages in chunk # " << chunk << ": " << pagesInChunk << endl;
             int inMemCount = 0;
             for (int page = 0; page < pagesInChunk; ++page) {
                 char* curPageAddr = startAddr + (chunk * params.granularity) +
-                                    (page * pageSize);
+                                    (page * PAGE_SIZE);
                 //TODO: remove
                 DEV if (page == 0) {
                     DEV tlog() << (void*) curPageAddr << endl;
                 }
                 if (ProcessInfo::blockInMemory(curPageAddr)) {
                     inMemCount++;
+                    extentInMemCount++;
                 }
             }
             arr.append(double(inMemCount) / pagesInChunk);
@@ -598,7 +607,7 @@ namespace {
         if (deletedRecordsArrayBuilder != NULL && spansRequestedArea) {
             BSONObjBuilder(deletedRecordsArrayBuilder->subobjStart())
                 .append("ofs", dl.getOfs() - extentOfs)
-                .append("recSize", dr->lengthWithHeaders());
+                .append("recBytes", dr->lengthWithHeaders());
         }
     }
 
@@ -609,18 +618,18 @@ namespace {
         killCurrentOp.checkForInterrupt();
 
         BSONObj obj = dl.obj();
-        int recSize = r->lengthWithHeaders();
+        int recBytes = r->lengthWithHeaders();
         double charactFieldValue;
         bool hasCharactField = extractCharactFieldValue(obj, params, charactFieldValue);
 
-        RecPos pos = RecPos::from(dl.getOfs(), recSize, extentOfs, params);
+        RecPos pos = RecPos::from(dl.getOfs(), recBytes, extentOfs, params);
         bool spansRequestedArea = false;
         for (RecPos::ChunkIterator it = pos.iterateChunks(); !it.end(); ++it) {
             spansRequestedArea = true;
             DiskStorageData& chunk = chunkData.at(it->chunkNum);
             chunk.numEntries += it->ratioHere;
-            chunk.recSize += it->sizeHere;
-            chunk.bsonSize += it->ratioHere * obj.objsize();
+            chunk.recBytes += it->sizeHere;
+            chunk.bsonBytes += it->ratioHere * obj.objsize();
             if (hasCharactField) {
                 chunk.charactCount += it->ratioHere;
                 chunk.charactSum += it->ratioHere * charactFieldValue;
@@ -630,15 +639,15 @@ namespace {
         if (recordsArrayBuilder != NULL && spansRequestedArea) {
             DEV {
                 int startsAt = dl.getOfs() - extentOfs;
-                int endsAt = startsAt + recSize;
+                int endsAt = startsAt + recBytes;
                 verify((startsAt < params.startOfs && endsAt > params.startOfs) ||
                        (startsAt < params.endOfs && endsAt >= params.endOfs) ||
                        (startsAt >= params.startOfs && endsAt < params.endOfs));
             }
             BSONObjBuilder recordBuilder(recordsArrayBuilder->subobjStart());
             recordBuilder.append("ofs", dl.getOfs() - extentOfs);
-            recordBuilder.append("recSize", recSize);
-            recordBuilder.append("bsonSize", obj.objsize());
+            recordBuilder.append("recBytes", recBytes);
+            recordBuilder.append("bsonBytes", obj.objsize());
             recordBuilder.append("_id", obj["_id"]);
             if (hasCharactField) {
                 recordBuilder.append("charact", charactFieldValue);
