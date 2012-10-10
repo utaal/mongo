@@ -29,6 +29,7 @@
 #include <boost/filesystem/convenience.hpp>
 #include <boost/filesystem/operations.hpp>
 
+//TODO(andrea.lattuada) cleanup imports
 #include "mongo/client/dbclientcursor.h"
 #include "mongo/db/commands.h"
 #include "mongo/db/db.h"
@@ -37,6 +38,7 @@
 #include "mongo/tools/tool.h"
 #include "mongo/util/processinfo.h"
 #include "mongo/util/mongoutils/math.h"
+#include "mongo/util/mongoutils/str.h"
 
 namespace mongo {
 
@@ -47,20 +49,16 @@ namespace {
     /**
      * Available subcommands.
      */
-    namespace SubCommand {
-        static const int diskStorage = 1 << 0;
-        static const int memInCore = 1 << 1;
-
-        /**
-         * @return the constant for the subcommand with the same name or 0 if none matches
-         */
-        static int fromStr(string& str);
-    }
+    enum SubCommand {
+        SUBCMD_DISK_STORAGE,
+        SUBCMD_MEM_IN_CORE
+    };
 
     /**
      * Simple struct to store various operation parameters to be passed around during analysis.
      */
     struct AnalyzeParams {
+        // startOfs and endOfs are extent-relative
         int startOfs;
         int endOfs;
         int length;
@@ -70,10 +68,11 @@ namespace {
         string charactField;
         bool charactFieldIsObjId;
         bool showRecords;
+        time_t startTime;
 
-        AnalyzeParams() : startOfs(0), endOfs(INT_MAX), length(INT_MAX), numberOfChunks(-1),
-                          granularity(-1), lastChunkLength(0), charactField("_id"),
-                          charactFieldIsObjId(true), showRecords(false) {
+        AnalyzeParams() : startOfs(0), endOfs(INT_MAX), length(INT_MAX), numberOfChunks(0),
+                          granularity(0), lastChunkLength(0), charactField("_id"),
+                          charactFieldIsObjId(true), showRecords(false), startTime(time(NULL)) {
         }
     };
 
@@ -94,9 +93,9 @@ namespace {
                                               freeRecords(mongo::Buckets, 0) {
         }
 
-        const DiskStorageData operator += (const DiskStorageData& rhs);
+        const DiskStorageData& operator += (const DiskStorageData& rhs);
 
-        void appendToBSONObjBuilder(BSONObjBuilder& b) const;
+        void appendToBSONObjBuilder(BSONObjBuilder& b, bool includeFreeRecords) const;
     };
 
     /**
@@ -110,7 +109,6 @@ namespace {
      * results in something like:
      *     firstChunkNum = 12
      *     lastChunkNum = 15
-     *     endOfFirstChunk = 4M (4 000 000)
      *     sizeInFirstChunk = 0.25M
      *     sizeInLastChunk = 0.10M
      *     sizeInMiddleChunk = 0.5M (== size of chunk)
@@ -126,12 +124,12 @@ namespace {
      *        // res contains the current chunk number, the number of bytes belonging to the current
      *        // chunk, and the ratio with the full size of the record
      *    }
+     *
      */
     struct RecPos {
         bool outOfRange;
         int firstChunkNum;
         int lastChunkNum;
-        int endOfFirstChunk;
         int sizeInFirstChunk;
         int sizeInLastChunk;
         int sizeInMiddleChunk;
@@ -147,7 +145,7 @@ namespace {
          * @param extentOfs extent offset as reported by DiskLoc
          * @param params operation parameters (see AnalyzeParams for details)
          */
-        static const RecPos from(int recOfs, int recLen, int extentOfs,
+        static RecPos from(int recOfs, int recLen, int extentOfs,
                                          const AnalyzeParams& params);
 
         // See RecPos class description
@@ -170,11 +168,15 @@ namespace {
 
             ChunkInfo* operator->();
 
+            // preincrement
             ChunkIterator& operator++();
 
         private:
             RecPos& _pos;
             ChunkInfo _curChunk;
+
+            // if _fresh, data in _curChunk refers to the current chunk, otherwise it needs
+            // to be computed
             bool _fresh;
         };
 
@@ -201,14 +203,13 @@ namespace {
               << "layout in storage files and in memory. Slow if run with {allExtents: true}.";
         }
 
-        //TODO(andrea.lattuada) verify this is enough
         virtual LockType locktype() const { return READ; }
 
     private:
         /**
          * @return the requested extent if it exists, otherwise NULL
          */
-        const Extent* getExtentNum(int extentNum, const NamespaceDetails* nsd);
+        static const Extent* getNthExtent(int extentNum, const NamespaceDetails* nsd);
 
         /**
          * Provides aggregate and (if requested) detailed information regarding the layout of
@@ -221,7 +222,7 @@ namespace {
          *
          *     { extentHeaderSize: <size>,
          *       recordHeaderSize: <size>,
-         *       range: [startOfs, endOfs],
+         *       range: [startOfs, endOfs],     // extent-relative
          *       numEntries: <number of records>,
          *       bsonSize: <total size of the bson objects>,
          *       recSize: <total size of the valid records>,
@@ -262,8 +263,9 @@ namespace {
          *
          * @return true on success, false on failure (partial output may still be present)
          */
-        bool analyzeDiskStorage(const NamespaceDetails* nsd, const Extent* ex,
-                                AnalyzeParams& params, string& errmsg, BSONObjBuilder& result);
+        static bool analyzeDiskStorage(const NamespaceDetails* nsd, const Extent* ex,
+                                       const AnalyzeParams& params, string& errmsg,
+                                       BSONObjBuilder& result);
 
         /**
          * Outputs which percentage of pages are in memory for the entire extent and per-chunk.
@@ -278,8 +280,8 @@ namespace {
          *
          * @return true on success, false on failure (partial output may still be present)
          */
-        bool analyzeMemInCore(const Extent* ex, AnalyzeParams& params,
-                              string& errmsg, BSONObjBuilder& result);
+        static bool analyzeMemInCore(const Extent* ex, const AnalyzeParams& params,
+                                     string& errmsg, BSONObjBuilder& result);
 
         /**
          * Extracts the characteristic field from the document, if present and of the right type.
@@ -289,28 +291,27 @@ namespace {
          * @param charactField dotted path to the characteristic field inside the document
          * @param charactFieldIsObjId if true, the charact. field is assumed to be a standard
          *                            object id
-         * @param now time when analysis started
          * @param value out: characteristic field value, only valid if true is returned
          * @return true if field was correctly extracted, false otherwise (missing or of wrong type)
          */
-        bool extractCharactFieldValue(BSONObj& obj, const string& charactField,
-                                      bool charactFieldIsObjId, time_t now, double& value);
+        static bool extractCharactFieldValue(BSONObj& obj, const AnalyzeParams& params,
+                                             double& value);
 
         /**
          * analyzeDiskStorage helper which processes a single record.
          */
-        void processRecord(const DiskLoc& dl, const Record* r, int extentOfs,
-                           const AnalyzeParams& params, time_t now,
-                           vector<DiskStorageData>& chunkData,
-                           BSONArrayBuilder* recordsArrayBuilder);
-
-        /**
-         * analyzeDiskStorage helper which processes a single record.
-         */
-        void processDeletedRecord(const DiskLoc& dl, const DeletedRecord* dr, const Extent* ex,
-                                  const AnalyzeParams& params, int bucketNum,
+        static void processRecord(const DiskLoc& dl, const Record* r, int extentOfs,
+                                  const AnalyzeParams& params,
                                   vector<DiskStorageData>& chunkData,
-                                  BSONArrayBuilder* deletedRecordsArrayBuilder);
+                                  BSONArrayBuilder* recordsArrayBuilder);
+
+        /**
+         * analyzeDiskStorage helper which processes a single record.
+         */
+        static void processDeletedRecord(const DiskLoc& dl, const DeletedRecord* dr,
+                                         const Extent* ex, const AnalyzeParams& params,
+                                         int bucketNum, vector<DiskStorageData>& chunkData,
+                                         BSONArrayBuilder* deletedRecordsArrayBuilder);
 
         /**
          * Entry point, parses command parameters and invokes runInternal.
@@ -318,26 +319,16 @@ namespace {
         bool run(const string& dbname , BSONObj& cmdObj, int, string& errmsg,
                  BSONObjBuilder& result, bool fromRepl);
 
-        bool runInternal(const NamespaceDetails* nsd, const Extent* ex, int subCommand,
+        /**
+         * @param params analysis parameters, will be updated with computed number of chunks or
+         *               granularity
+         */
+        bool runInternal(const NamespaceDetails* nsd, const Extent* ex, SubCommand subCommand,
                          AnalyzeParams& params, string& errmsg, BSONObjBuilder& result);
 
     } storageDetailsCmd;
 
-
-    int SubCommand::fromStr(string& str) {
-        if (str == "diskStorage") {
-            return diskStorage;
-        }
-        else if (str == "memInCore") {
-            return memInCore;
-        }
-        else {
-            return 0;
-        }
-    }
-
-    const DiskStorageData DiskStorageData::operator+= (const DiskStorageData& rhs) {
-        DiskStorageData result = *this;
+    const DiskStorageData& DiskStorageData::operator+= (const DiskStorageData& rhs) {
         this->numEntries += rhs.numEntries;
         this->recSize += rhs.recSize;
         this->bsonSize += rhs.bsonSize;
@@ -349,11 +340,11 @@ namespace {
                  thisit != this->freeRecords.end(); thisit++, rhsit++) {
             *thisit += *rhsit;
         }
-        return result;
+        return *this;
     }
 
-    void DiskStorageData::appendToBSONObjBuilder(BSONObjBuilder& b) const {
-        b.append("numEntries", (double) numEntries);
+    void DiskStorageData::appendToBSONObjBuilder(BSONObjBuilder& b, bool includeFreeRecords) const {
+        b.append("numEntries", double(numEntries));
         b.append("bsonSize", bsonSize);
         b.append("recSize", recSize);
         b.append("onDiskSize", onDiskSize);
@@ -361,42 +352,51 @@ namespace {
             b.append("charactSum", charactSum);
             b.append("charactCount", (double) charactCount);
         }
-        b.append("freeRecsPerBucket", freeRecords);
+        if (includeFreeRecords) {
+            b.append("freeRecsPerBucket", freeRecords);
+        }
     }
 
-    const RecPos RecPos::from(int recOfs, int recLen, int extentOfs, const AnalyzeParams& config) {
+    /**
+     * @param recOfs file-relative record offset
+     * @param extentOfs file-relative extent offset
+     */
+    RecPos RecPos::from(int recOfs, int recLen, int extentOfs, const AnalyzeParams& params) {
         RecPos res;
-        res.numberOfChunks = config.numberOfChunks;
+        res.numberOfChunks = params.numberOfChunks;
+        // startsAt and endsAt are extent-relative
         int startsAt = recOfs - extentOfs;
         int endsAt = startsAt + recLen;
-        if (endsAt < config.startOfs || startsAt >= config.endOfs) {
+        if (endsAt < params.startOfs || startsAt >= params.endOfs) {
             res.outOfRange = true;
             return res;
         }
         else {
             res.outOfRange = false;
         }
-        res.firstChunkNum = (startsAt - config.startOfs) / config.granularity;
-        res.lastChunkNum = (endsAt - config.startOfs) / config.granularity;
-        res.endOfFirstChunk = (res.firstChunkNum + 1) * config.granularity + config.startOfs +
-                              extentOfs;
-        res.sizeInFirstChunk = min(res.endOfFirstChunk - recOfs, recLen);
+        res.firstChunkNum = (startsAt - params.startOfs) / params.granularity;
+        res.lastChunkNum = (endsAt - params.startOfs) / params.granularity;
+
+        // extent-relative
+        int endOfFirstChunk = (res.firstChunkNum + 1) * params.granularity + params.startOfs;
+        res.sizeInFirstChunk = min(endOfFirstChunk - startsAt, recLen);
+        res.sizeInMiddleChunk = params.granularity;
         res.sizeInLastChunk = recLen - res.sizeInFirstChunk -
-                              config.granularity * (res.lastChunkNum - res.firstChunkNum
+                              params.granularity * (res.lastChunkNum - res.firstChunkNum
                                                     - 1);
-        res.sizeInMiddleChunk = config.granularity;
         if (res.sizeInLastChunk < 0) {
             res.sizeInLastChunk = 0;
         }
         res.inFirstChunkRatio = (double) res.sizeInFirstChunk / recLen;
-        res.inLastChunkRatio = (double) res.sizeInLastChunk / recLen;
         res.inMiddleChunkRatio = (double) res.sizeInMiddleChunk / recLen;
+        res.inLastChunkRatio = (double) res.sizeInLastChunk / recLen;
         return res;
     }
 
     bool RecPos::ChunkIterator::end() const {
-        return _pos.outOfRange || !(_curChunk.chunkNum < _pos.numberOfChunks &&
-                                    _curChunk.chunkNum <= _pos.lastChunkNum);
+        return _pos.outOfRange 
+            || _curChunk.chunkNum >= _pos.numberOfChunks
+            || _curChunk.chunkNum > _pos.lastChunkNum;
     }
 
     RecPos::ChunkIterator RecPos::iterateChunks() {
@@ -404,11 +404,13 @@ namespace {
     }
 
     RecPos::ChunkInfo* RecPos::ChunkIterator::operator->() {
+        verify(!end());
         if (!_fresh) {
-            verify(_curChunk.chunkNum < _pos.numberOfChunks &&
-                   _curChunk.chunkNum <= _pos.lastChunkNum);
-            _curChunk.sizeHere = -1;
-            _curChunk.ratioHere = -1;
+            //TODO(andrea.lattuada) remove DEV block
+            DEV { // defensive, see verify at end of function
+                _curChunk.sizeHere = -1;
+                _curChunk.ratioHere = -1;
+            }
             if (_curChunk.chunkNum == _pos.firstChunkNum) {
                 _curChunk.sizeHere = _pos.sizeInFirstChunk;
                 _curChunk.ratioHere = _pos.inFirstChunkRatio;
@@ -430,19 +432,21 @@ namespace {
     }
 
     RecPos::ChunkIterator& RecPos::ChunkIterator::operator++() {
-        ++_curChunk.chunkNum;
+        _curChunk.chunkNum++;
         _fresh = false;
         return *this;
     }
 
     bool StorageDetailsCmd::analyzeDiskStorage(const NamespaceDetails* nsd, const Extent* ex,
-                                               AnalyzeParams& params, string& errmsg,
+                                               const AnalyzeParams& params, string& errmsg,
                                                BSONObjBuilder& result) {
+        bool isCapped = nsd->isCapped();
+
         result.append("extentHeaderSize", Extent::HeaderSize());
         result.append("recordHeaderSize", Record::HeaderSize);
         result.append("range", BSON_ARRAY(params.startOfs << params.endOfs));
+        result.append("isCapped", isCapped);
 
-        time_t now = time(NULL);
         vector<DiskStorageData> chunkData(params.numberOfChunks,
                                           DiskStorageData(params.granularity));
         chunkData[params.numberOfChunks - 1].onDiskSize = params.lastChunkLength;
@@ -450,38 +454,32 @@ namespace {
         int extentOfs = ex->myLoc.getOfs();
 
         { // ensure done() is called by invoking destructor when done with the builder
-            scoped_ptr<BSONArrayBuilder> recordsArrayBuilder(NULL);
+            scoped_ptr<BSONArrayBuilder> recordsArrayBuilder;
             if (params.showRecords) {
                 recordsArrayBuilder.reset(new BSONArrayBuilder(result.subarrayStart("records")));
             }
 
             for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) {
-                killCurrentOp.checkForInterrupt();
                 r = dl.rec();
-
-                processRecord(dl, r, extentOfs, params, now, chunkData, recordsArrayBuilder.get());
+                processRecord(dl, r, extentOfs, params, chunkData, recordsArrayBuilder.get());
             }
         }
 
         { // ensure done() is called by invoking destructor when done with the builder
-            scoped_ptr<BSONArrayBuilder> deletedRecordsArrayBuilder(NULL);
+            scoped_ptr<BSONArrayBuilder> deletedRecordsArrayBuilder;
             if (params.showRecords) {
                 deletedRecordsArrayBuilder.reset(
                         new BSONArrayBuilder(result.subarrayStart("deletedRecords")));
             }
 
-            if (nsd->isCapped()) {
-                errmsg = "capped collections are not supported";
-                return false;
-            }
-            else {
+            if (!isCapped) {
                 for (int bucketNum = 0; bucketNum < mongo::Buckets; bucketNum++) {
                     DiskLoc dl = nsd->deletedList[bucketNum];
-                    DeletedRecord* dr;
-                    for (; !dl.isNull(); dl = dr->nextDeleted()) {
-                        dr = dl.drec();
+                    while (!dl.isNull()) {
+                        DeletedRecord* dr = dl.drec();
                         processDeletedRecord(dl, dr, ex, params, bucketNum, chunkData,
                                              deletedRecordsArrayBuilder.get());
+                        dl = dr->nextDeleted();
                     }
                 }
             }
@@ -496,15 +494,15 @@ namespace {
                 killCurrentOp.checkForInterrupt();
                 extentData += *it;
                 BSONObjBuilder chunkBuilder;
-                it->appendToBSONObjBuilder(chunkBuilder);
+                it->appendToBSONObjBuilder(chunkBuilder, !isCapped);
                 chunkArrayBuilder.append(chunkBuilder.obj());
             }
         }
-        extentData.appendToBSONObjBuilder(result);
+        extentData.appendToBSONObjBuilder(result, !isCapped);
         return true;
     }
 
-    bool StorageDetailsCmd::analyzeMemInCore(const Extent* ex, AnalyzeParams& params,
+    bool StorageDetailsCmd::analyzeMemInCore(const Extent* ex, const AnalyzeParams& params,
                                              string& errmsg, BSONObjBuilder& result) {
         verify(sizeof(char) == 1);
         size_t pageSize = ProcessInfo::pageSize();
@@ -518,36 +516,37 @@ namespace {
                 chunkLength = params.lastChunkLength;
             }
             int pagesInChunk = ceilingDiv(chunkLength, pageSize);
-            DEV tlog() << "pages in chunk # " << chunk << ": " << pagesInChunk << endl;
+            //TODO: remove
+            DEV dlog(LL_DEBUG) << "pages in chunk # " << chunk << ": " << pagesInChunk << endl;
             int inMemCount = 0;
             for (int page = 0; page < pagesInChunk; ++page) {
                 char* curPageAddr = startAddr + (chunk * params.granularity) +
                                     (page * pageSize);
-                if (page == 0) {
+                //TODO: remove
+                DEV if (page == 0) {
                     DEV tlog() << (void*) curPageAddr << endl;
                 }
-                if(ProcessInfo::blockInMemory(curPageAddr)) {
-                    ++inMemCount;
+                if (ProcessInfo::blockInMemory(curPageAddr)) {
+                    inMemCount++;
                 }
             }
-            arr.append((double) inMemCount / pagesInChunk);
+            arr.append(double(inMemCount) / pagesInChunk);
         }
         arr.done();
 
         return true;
     }
 
-    bool StorageDetailsCmd::extractCharactFieldValue(BSONObj& obj, const string& charactField,
-                                                     bool charactFieldIsObjId, time_t now,
+    bool StorageDetailsCmd::extractCharactFieldValue(BSONObj& obj, const AnalyzeParams& params,
                                                      double& value) {
-        BSONElement elem = obj.getFieldDotted(charactField);
+        BSONElement elem = obj.getFieldDotted(params.charactField);
         if (elem.eoo()) {
             return false;
         }
         bool hasval = false;
-        if (charactFieldIsObjId) {
+        if (params.charactFieldIsObjId) {
             OID oid = elem.OID();
-            value = now - oid.asTimeT();
+            value = params.startTime - oid.asTimeT();
             hasval = true;
         }
         else if (elem.isNumber()) {
@@ -557,18 +556,17 @@ namespace {
         return hasval;
     }
 
-    const Extent* StorageDetailsCmd::getExtentNum(int extentNum, const NamespaceDetails* nsd) {
-        Extent* ex;
-        int curExtent;
-        for (ex = DataFileMgr::getExtent(nsd->firstExtent), curExtent = 0;
-             ex != NULL && curExtent < extentNum;
-             ex = ex->getNextExtent(), ++curExtent) {
-            continue;
+    const Extent* StorageDetailsCmd::getNthExtent(int extentNum,
+                                                  const NamespaceDetails* nsd) {
+        int curExtent = 0;
+        for (Extent* ex = DataFileMgr::getExtent(nsd->firstExtent);
+             ex != NULL;
+             ex = ex->getNextExtent()) {
+
+            if (curExtent == extentNum) return ex;
+            curExtent++;
         }
-        if (curExtent != extentNum) {
-            return NULL;
-        }
-        return ex;
+        return NULL;
     }
 
     void StorageDetailsCmd::processDeletedRecord(const DiskLoc& dl, const DeletedRecord* dr,
@@ -576,6 +574,8 @@ namespace {
                                                  int bucketNum,
                                                  vector<DiskStorageData>& chunkData,
                                                  BSONArrayBuilder* deletedRecordsArrayBuilder) {
+        killCurrentOp.checkForInterrupt();
+
         int extentOfs = ex->myLoc.getOfs();
 
         if (! (dl.a() == ex->myLoc.a() &&
@@ -584,12 +584,12 @@ namespace {
 
             return;
         }
-        
 
         RecPos pos = RecPos::from(dl.getOfs(), dr->lengthWithHeaders(), extentOfs, params);
         bool spansRequestedArea = false;
         for (RecPos::ChunkIterator it = pos.iterateChunks(); !it.end(); ++it) {
 
+            //TODO(andrea.lattuada) use operator[] when this is tested
             DiskStorageData& chunk = chunkData.at(it->chunkNum);
             chunk.freeRecords.at(bucketNum) += it->ratioHere;
             spansRequestedArea = true;
@@ -603,21 +603,19 @@ namespace {
     }
 
     void StorageDetailsCmd::processRecord(const DiskLoc& dl, const Record* r, int extentOfs,
-                                          const AnalyzeParams& params, time_t now,
+                                          const AnalyzeParams& params,
                                           vector<DiskStorageData>& chunkData,
                                           BSONArrayBuilder* recordsArrayBuilder) {
+        killCurrentOp.checkForInterrupt();
+
         BSONObj obj = dl.obj();
         int recSize = r->lengthWithHeaders();
         double charactFieldValue;
-        bool hasCharactField = extractCharactFieldValue(obj, params.charactField,
-                                                        params.charactFieldIsObjId, now,
-                                                        charactFieldValue);
+        bool hasCharactField = extractCharactFieldValue(obj, params, charactFieldValue);
 
         RecPos pos = RecPos::from(dl.getOfs(), recSize, extentOfs, params);
         bool spansRequestedArea = false;
         for (RecPos::ChunkIterator it = pos.iterateChunks(); !it.end(); ++it) {
-            killCurrentOp.checkForInterrupt();
-
             spansRequestedArea = true;
             DiskStorageData& chunk = chunkData.at(it->chunkNum);
             chunk.numEntries += it->ratioHere;
@@ -641,9 +639,7 @@ namespace {
             recordBuilder.append("ofs", dl.getOfs() - extentOfs);
             recordBuilder.append("recSize", recSize);
             recordBuilder.append("bsonSize", obj.objsize());
-            BSONElement objIDElm;
-            obj.getObjectID(objIDElm);
-            recordBuilder.append("id", objIDElm.OID().toString());
+            recordBuilder.append("_id", obj["_id"]);
             if (hasCharactField) {
                 recordBuilder.append("charact", charactFieldValue);
             }
@@ -660,16 +656,21 @@ namespace {
             return false;
         }
         string subCommandStr = analyzeElm.String();
-        int subCommand = SubCommand::fromStr(subCommandStr);
-
-        if (subCommand == 0) {
+        SubCommand subCommand;
+        if (!subCommandStr.compare("diskStorage")) {
+            subCommand = SUBCMD_DISK_STORAGE;
+        }
+        else if (!subCommandStr.compare("memInCore")) {
+            subCommand = SUBCMD_MEM_IN_CORE;
+        }
+        else {
             errmsg = str::stream() << subCommandStr << " is not a valid subcommand, "
                                    << "use 'diskStorage' or 'memInCore'";
             return false;
         }
 
-        string ns = dbname + "." + cmdObj.firstElement().valuestrsafe();
-        NamespaceDetails * nsd = nsdetails( ns.c_str() );
+        const string ns = dbname + "." + cmdObj.firstElement().valuestrsafe();
+        NamespaceDetails * nsd = nsdetails(ns.c_str());
         if (!cmdLine.quiet) {
             tlog() << "CMD: storageDetails " << ns << ", analyze " << subCommandStr << endl;
         }
@@ -685,7 +686,7 @@ namespace {
             return false;
         }
         int extentNum = extentElm.Number();
-        const Extent* extent = getExtentNum(extentNum, nsd);
+        const Extent* extent = getNthExtent(extentNum, nsd);
         if (extent == NULL) {
             errmsg = str::stream() << "extent " << extentNum << " does not exist";
             return false;
@@ -693,77 +694,67 @@ namespace {
 
         AnalyzeParams params;
 
-        // { range: [from, to] }
+        // { range: [from, to] }, extent-relative
         BSONElement rangeElm = cmdObj["range"];
-        if (!rangeElm.eoo()) {
-            vector<BSONElement> rangeVector = rangeElm.Array();
-            params.startOfs = rangeVector[0].Number();
-            params.endOfs = rangeVector[1].Number();
-            // result.append("range", rangeElm);
+        if (rangeElm.ok()) {
+            params.startOfs = rangeElm["0"].Number();
+            params.endOfs = rangeElm["1"].Number();
         }
 
         // { granularity: bytes }
-        BSONElement granularityElm = cmdObj["granularity"];
-        if (!granularityElm.eoo()) {
-            params.granularity = granularityElm.Number();
-            // result.append("granularity", params.granularity);
-        }
+        params.granularity = cmdObj["granularity"].number();
 
-        BSONElement numChunksElm = cmdObj["numberOfChunks"];
-        if (!numChunksElm.eoo()) {
-            params.numberOfChunks = numChunksElm.Number();
-            // result.append("numberOfChunks", params.numberOfChunks);
-        }
+        // { numberOfChunks: bytes }
+        params.numberOfChunks = cmdObj["numberOfChunks"].number();
 
-        if (params.granularity == -1 && params.numberOfChunks == -1) {
+        if (params.granularity == 0 && params.numberOfChunks == 0) {
             errmsg = "either granularity or numberOfChunks must be specified in options";
             return false;
         }
 
         BSONElement charactFieldElm = cmdObj["charactField"];
-        if (!charactFieldElm.eoo()) {
-            params.charactField = std::string(charactFieldElm.Obj()["name"].String());
+        if (charactFieldElm.ok()) {
+            params.charactField = charactFieldElm["name"].String();
             params.charactFieldIsObjId = false;
-            BSONElement isStdObjIdElm = charactFieldElm.Obj()["isStdObjId"];
+            BSONElement isStdObjIdElm = charactFieldElm["isStdObjId"];
             if (!isStdObjIdElm.eoo()) {
                 params.charactFieldIsObjId = isStdObjIdElm.Bool();
             }
         }
 
-        BSONElement showRecsElm = cmdObj["showRecords"];
-        if (!showRecsElm.eoo() && showRecsElm.Bool()) {
-            params.showRecords = true;
-        }
+        params.showRecords = cmdObj["showRecords"].trueValue();
 
-        killCurrentOp.checkForInterrupt();
         return runInternal(nsd, extent, subCommand, params, errmsg, result);
     }
 
     bool StorageDetailsCmd::runInternal(const NamespaceDetails* nsd, const Extent* ex,
-                                        int subCommand, AnalyzeParams& params, string& errmsg,
-                                        BSONObjBuilder& result) {
+                                        SubCommand subCommand, AnalyzeParams& params,
+                                        string& errmsg, BSONObjBuilder& result) {
         params.startOfs = max(0, params.startOfs);
         params.endOfs = min(params.endOfs, ex->length);
         params.length = params.endOfs - params.startOfs;
-        if (params.numberOfChunks != -1) {
+        if (params.numberOfChunks != 0) {
             params.granularity = (params.endOfs - params.startOfs + params.numberOfChunks
                                   - 1) / params.numberOfChunks;
         }
         params.numberOfChunks = ceilingDiv(params.length, params.granularity);
         params.lastChunkLength = params.length -
                 (params.granularity * (params.numberOfChunks - 1));
-        DEV tlog() << "this extent or part of extent (" << params.length << " bytes)"
-                   << " will be split in " << params.numberOfChunks << " chunks" << endl;
+        log(LL_DEBUG) << "this extent or part of extent (" << params.length << " bytes)"
+                      << " will be split in " << params.numberOfChunks << " chunks" << endl;
+        BSONObjBuilder outputBuilder;
+        bool success = false;
         switch (subCommand) {
-            case SubCommand::diskStorage:
-                return analyzeDiskStorage(nsd, ex, params, errmsg, result);
+            case SUBCMD_DISK_STORAGE:
+                success = analyzeDiskStorage(nsd, ex, params, errmsg, outputBuilder);
                 break;
-            case SubCommand::memInCore:
-                return analyzeMemInCore(ex, params, errmsg, result);
+            case SUBCMD_MEM_IN_CORE:
+                success = analyzeMemInCore(ex, params, errmsg, outputBuilder);
                 break;
         }
-        errmsg = "no such subcommand";
-        return false;
+        if (!success) return false;
+        result.appendElements(outputBuilder.obj());
+        return true;
     }
 
 }  // namespace
