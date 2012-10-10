@@ -20,8 +20,10 @@
 #include "mongo/pch.h"
 
 #include <iostream>
+#include <list>
 #include <string>
 
+#include "mongo/base/disallow_copying.h"
 #include "mongo/client/dbclientcursor.h"
 #include "mongo/db/btree.h"
 #include "mongo/db/commands.h"
@@ -39,6 +41,7 @@ namespace mongo {
         string indexName;
         bool dumpTree;
         bool analyzeStorage;
+        vector<int> expandNodes;
     };
 
     class IndexStatsCmd : public Command {
@@ -63,7 +66,7 @@ namespace mongo {
 
     struct BtreeStats;
 
-    struct LevelStats {
+    struct AreaStats {
         unsigned int numBuckets;
         unsigned int totalBsonSize;
         unsigned int totalEmptySize;
@@ -71,28 +74,48 @@ namespace mongo {
         unsigned int totalKeys;
         unsigned int usedKeys;
 
-        LevelStats() : numBuckets(0), totalBsonSize(0), totalEmptySize(0), totalKeyNodeSize(0), totalKeys(0), usedKeys(0) {
+        AreaStats() : numBuckets(0), totalBsonSize(0), totalEmptySize(0), totalKeyNodeSize(0), totalKeys(0), usedKeys(0) {
         }
-        virtual ~LevelStats() {
+        virtual ~AreaStats() {
         }
 
         void appendTo(BSONObjBuilder& builder, const BtreeStats* globalStats) const;
     };
 
-    struct BtreeStats : public LevelStats {
+    struct BtreeStats {
         unsigned int bucketBodySize;
         unsigned int depth;
-        vector<LevelStats> perLevel;
+        vector<AreaStats> perLevel;
+        vector<vector<AreaStats> > branch;
 
-        BtreeStats() : bucketBodySize(0), depth(0), perLevel(0) {
+        BtreeStats() : bucketBodySize(0), depth(0) {
+            branch.push_back(vector<AreaStats>(1));
+        }
+
+        AreaStats& root() {
+            return branch.at(0).at(0);
+        }
+
+        const AreaStats& root() const {
+            return branch.at(0).at(0);
+        }
+
+        vector<AreaStats>& branchAtDepth(int depth) {
+            return branch.at(depth + 1);
+        }
+
+        vector<AreaStats>& newBranchLevel(int depth, int childrenCount) {
+            verify(branch.size() == depth + 1);
+            branch.push_back(vector<AreaStats>(childrenCount));
+            return branchAtDepth(depth + 1);
         }
 
         void appendTo(BSONObjBuilder& builder) const {
-            LevelStats::appendTo(builder, this);
+            root().appendTo(builder, this);
             builder << "bucketBodySize" << bucketBodySize;
             builder << "depth" << depth;
             BSONArrayBuilder perLevelArrayBuilder(builder.subarrayStart("perLevel"));
-            for (vector<LevelStats>::const_iterator it = perLevel.begin();
+            for (vector<AreaStats>::const_iterator it = perLevel.begin();
                  it != perLevel.end();
                  ++it) {
                 BSONObjBuilder levelBuilder(perLevelArrayBuilder.subobjStart());
@@ -125,7 +148,7 @@ namespace mongo {
         unsigned int _bucketBodySize;
     };
 
-    void LevelStats::appendTo(BSONObjBuilder& builder, const BtreeStats* globalStats) const {
+    void AreaStats::appendTo(BSONObjBuilder& builder, const BtreeStats* globalStats) const {
         StatsCalc calc(numBuckets, globalStats->bucketBodySize);
         builder << "numBuckets" << numBuckets
                 << "usedKeys" << usedKeys
@@ -144,11 +167,17 @@ namespace mongo {
 
     class BtreeInspector {
     public:
-        virtual bool inspect(DiskLoc& head, BSONObjBuilder* treeBuilder) = 0;
+        BtreeInspector(/*int numExtents*/) /*: extentStats(numExtents)*/ {
+        }
+
         virtual ~BtreeInspector() {
         }
 
-        BtreeStats stats;
+        virtual bool inspect(DiskLoc& head) = 0;
+        virtual BtreeStats& stats() = 0;
+
+        //vector<BtreeStats> extentStats;
+        MONGO_DISALLOW_COPYING(BtreeInspector);
     };
 
     template <class Version>
@@ -159,101 +188,105 @@ namespace mongo {
         typedef typename mongo::BucketBasics<Version>::KeyNode KeyNode;
         typedef typename mongo::BucketBasics<Version>::Key Key;
 
-        BtreeInspectorImpl() {
+        BtreeInspectorImpl(vector<int> expandNodes/*int numExtents*/) : _expandNodes(expandNodes) /*: BtreeInspector(numExtents)*/ {
         }
 
-        virtual bool inspect(DiskLoc& head, BSONObjBuilder* treeBuilder) /*override*/;
+        virtual bool inspect(DiskLoc& head) /*override*/;
+
+        virtual BtreeStats& stats() {
+            return _stats;
+        }
 
     private:
-        bool inspectBucket(const DiskLoc& dl, unsigned int depth, BSONObjBuilder* bucketBuilder);
-        bool inspectChild(const DiskLoc dl, unsigned int curDepth, BSONArrayBuilder* childsArrayBuilder);
+        bool inspectBucket(const DiskLoc& dl, int depth, int childNum, bool expandedBranch, list<AreaStats*> branchStats);
+
+        vector<int> _expandNodes;
+        BtreeStats _stats;
     };
 
     typedef BtreeInspectorImpl<V0> BtreeInspectorV0;
     typedef BtreeInspectorImpl<V1> BtreeInspectorV1;
 
     template <class Version>
-    bool BtreeInspectorImpl<Version>::inspect(DiskLoc& head, BSONObjBuilder* treeBuilder) {
-        stats.bucketBodySize = BucketBasics::bodySize();
-        return this->inspectBucket(head, 0, treeBuilder);
+    bool BtreeInspectorImpl<Version>::inspect(DiskLoc& head) {
+        _stats.bucketBodySize = BucketBasics::bodySize();
+        list<AreaStats*> branchStats;
+        branchStats.push_back(&_stats.root());
+        return this->inspectBucket(head, 0, 0, true, branchStats);
     }
 
     template <class Version>
-    bool BtreeInspectorImpl<Version>::inspectChild(const DiskLoc loc, unsigned int curDepth, BSONArrayBuilder* childsArrayBuilder) {
-        if ( !loc.isNull() ) {
-            if (childsArrayBuilder != NULL) {
-                BSONObjBuilder childBucketBuilder(childsArrayBuilder->subobjStart());
-                return inspectBucket(loc, curDepth + 1, &childBucketBuilder);
-            }
-            else {
-                return inspectBucket(loc, curDepth + 1, NULL);
-            }
-        }
-        return true;
+    void addTo(AreaStats* stats, int totalKeyCount, int usedKeyCount, const BtreeBucket<Version>* bucket, int keyNodeSize) {
+        stats->numBuckets += 1;
+        stats->totalKeys += totalKeyCount;
+        stats->usedKeys += usedKeyCount;
+        stats->totalBsonSize += bucket->getBsonSize();
+        stats->totalEmptySize += bucket->getEmptySize();
+        stats->totalKeyNodeSize += keyNodeSize * totalKeyCount;
     }
 
     template <class Version>
-    void addTo(LevelStats& stats, int totalKeyCount, int usedKeyCount, const BtreeBucket<Version>* bucket, int keyNodeSize) {
-        stats.numBuckets += 1;
-        stats.totalKeys += totalKeyCount;
-        stats.usedKeys += usedKeyCount;
-        stats.totalBsonSize += bucket->getBsonSize();
-        stats.totalEmptySize += bucket->getEmptySize();
-        stats.totalKeyNodeSize += keyNodeSize * totalKeyCount;
-    }
-
-    template <class Version>
-    bool BtreeInspectorImpl<Version>::inspectBucket(const DiskLoc& dl, unsigned int depth, BSONObjBuilder* bucketBuilder) {
+    bool BtreeInspectorImpl<Version>::inspectBucket(const DiskLoc& dl, int depth, int childNum, bool expandedBranch, list<AreaStats*> branchStats) {
         const BtreeBucket<Version>* bucket = dl.btree<Version>();
         int usedKeyCount = 0;
-        int totalKeyCount = 0;
-        {
-            killCurrentOp.checkForInterrupt();
 
-            scoped_ptr<BSONArrayBuilder> childsArrayBuilder(NULL);
-            if (bucketBuilder != NULL) {
-                childsArrayBuilder.reset(new BSONArrayBuilder(bucketBuilder->subarrayStart("childs")));
-            }
-            for ( int i = 0; i < bucket->getN(); i++ ) {
-                const _KeyNode& kn = bucket->k(i);
+        killCurrentOp.checkForInterrupt();
 
-                if ( kn.isUsed() ) {
-                    ++usedKeyCount;
-                    this->inspectChild(kn.prevChildBucket, depth, childsArrayBuilder.get());
-                }
-                ++totalKeyCount;
-            }
-            this->inspectChild(bucket->getNextChild(), depth, childsArrayBuilder.get());
-        }
+        DEV tlog() << "aa - " << branchStats.size() << endl;
+        int keyCount = bucket->getN();
+        int childrenCount = keyCount + 1;
 
-        if (depth > stats.depth) stats.depth = depth;
-        addTo(stats, totalKeyCount, usedKeyCount, bucket, sizeof(_KeyNode));
-        while (stats.perLevel.size() < depth + 1)
-            stats.perLevel.push_back(LevelStats());
-        LevelStats& level = stats.perLevel.at(depth);
-        addTo(level, totalKeyCount, usedKeyCount, bucket, sizeof(_KeyNode));
-
-        if (bucketBuilder != NULL) {
-            *bucketBuilder << "n" << bucket->getN()
-                           << "depth" << depth
-                           << "usedKeys" << usedKeyCount
-                           << "totalKeys" << totalKeyCount
-                           << "diskLoc" << dl.toBSONObj();
-        }
-
-        if (bucketBuilder != NULL) {
-            if (bucket->getN() > 0) {
-                const KeyNode& firstKeyNode = bucket->keyNode(0);
-                const Key& key = firstKeyNode.key;
-                bucketBuilder->append("firstKey", key.toBson());
-                if (bucket->getN() > 1) {
-                    const KeyNode& lastKeyNode =
-                            bucket->keyNode(bucket->getN() - 1);
-                    const Key& key = lastKeyNode.key;
-                    bucketBuilder->append("lastKey", key.toBson());
-                }
+        if (expandedBranch) {
+            if (_expandNodes[depth] == childNum) {
+                _stats.newBranchLevel(depth, childrenCount);
+            } else {
+                expandedBranch = false;
             }
         }
+
+        for ( int i = 0; i < keyCount; i++ ) {
+            const _KeyNode& kn = bucket->k(i);
+
+            if ( kn.isUsed() ) {
+                ++usedKeyCount;
+                this->inspectBucket(kn.prevChildBucket, depth + 1, i, expandedBranch, branchStats);
+            }
+        }
+        this->inspectBucket(bucket->getNextChild(), depth + 1, keyCount, expandedBranch, branchStats);
+
+        DEV tlog() << "aa - " << branchStats.size() << endl;
+        if (depth > _stats.depth) _stats.depth = depth;
+        for (list<AreaStats*>::iterator it = branchStats.begin(); it != branchStats.end(); ++it) {
+            DEV tlog() << "a " << *it << endl;
+            addTo(*it, keyCount, usedKeyCount, bucket, sizeof(_KeyNode));
+            DEV tlog() << "b" << endl;
+        }
+        while (_stats.perLevel.size() < depth + 1)
+            _stats.perLevel.push_back(AreaStats());
+        AreaStats& level = _stats.perLevel.at(depth);
+        addTo(&level, keyCount, usedKeyCount, bucket, sizeof(_KeyNode));
+
+        // if (bucketBuilder != NULL) {
+        //     *bucketBuilder << "n" << bucket->getN()
+        //                    << "depth" << depth
+        //                    << "usedKeys" << usedKeyCount
+        //                    << "totalKeys" << totalKeyCount
+        //                    << "diskLoc" << dl.toBSONObj();
+        // }
+
+        // if (bucketBuilder != NULL) {
+        //     if (bucket->getN() > 0) {
+        //         const KeyNode& firstKeyNode = bucket->keyNode(0);
+        //         const Key& key = firstKeyNode.key;
+        //         bucketBuilder->append("firstKey", key.toBson());
+        //         if (bucket->getN() > 1) {
+        //             const KeyNode& lastKeyNode =
+        //                     bucket->keyNode(bucket->getN() - 1);
+        //             const Key& key = lastKeyNode.key;
+        //             bucketBuilder->append("lastKey", key.toBson());
+        //         }
+        //     }
+        // }
         return true;
     }
 
@@ -286,86 +319,88 @@ namespace mongo {
         BSONElement analyzeStorageElm = cmdObj["analyzeStorage"];
         if (analyzeStorageElm.ok()) params.analyzeStorage = analyzeStorageElm.trueValue();
 
+        BSONElement expandNodes = cmdObj["expandNodes"];
+        if (expandNodes.ok()) {
+            vector<BSONElement> arr = expandNodes.Array();
+            for (vector<BSONElement>::const_iterator it = arr.begin(); it != arr.end(); ++it) {
+                int el = int(it->Number());
+                params.expandNodes.push_back(el);
+            }
+        }
+
         return runInternal(errmsg, nsd, params, result);
     }
 
     bool IndexStatsCmd::runInternal(string& errmsg, NamespaceDetails* nsd, IndexStatsParams params, BSONObjBuilder& result) {
-        {
-            IndexDetails* detailsPtr = NULL;
-            for (NamespaceDetails::IndexIterator it = nsd->ii(); it.more(); ) {
-                IndexDetails& cur = it.next();
-                if (cur.indexName() == params.indexName) detailsPtr = &cur;
-            }
-            if (detailsPtr == NULL) {
-                errmsg = "the requested index does not exist";
-                return false;
-            }
-            IndexDetails& details = *detailsPtr;
-            // IndexInterface& interface = details.idxInterface();
-            result << "name" << details.indexName()
-                   << "version" << details.version()
-                   << "isIdIndex" << details.isIdIndex()
-                   << "keyPattern" << details.keyPattern()
-                   << "storageNs" << details.indexNamespace();
-
-            if (params.analyzeStorage) {
-                NamespaceDetails* indexNsd = nsdetails(details.indexNamespace().c_str());
-                BSONArrayBuilder extentsArrayBuilder(result.subarrayStart("extents"));
-                unsigned int totRecordCount = 0;
-                unsigned int totRecLen = 0;
-                unsigned int totExtentSpace = 0;
-                for (Extent* ex = DataFileMgr::getExtent(indexNsd->firstExtent);
-                     ex != NULL; ex = ex->getNextExtent()) {
-
-                    killCurrentOp.checkForInterrupt();
-
-                    BSONObjBuilder extentBuilder(extentsArrayBuilder.subobjStart());
-                    extentBuilder << "diskLoc" << ex->myLoc.toBSONObj()
-                                  << "length" << ex->length;
-
-                    unsigned int recordCount = 0;
-                    unsigned int recLen = 0;
-                    Record* r;
-                    for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) {
-                        killCurrentOp.checkForInterrupt();
-                        r = dl.rec();
-
-                        recLen += r->lengthWithHeaders();
-                        totRecLen += r->lengthWithHeaders();
-                        ++recordCount;
-                        ++totRecordCount;
-                    }
-                    totExtentSpace += (ex->length - Extent::HeaderSize());
-
-                    extentBuilder << "entries" << recordCount
-                                  << "recLen" << recLen
-                                  << "usage" << (double) recLen / (ex->length - Extent::HeaderSize());
-                }
-                extentsArrayBuilder.doneFast();
-                result << "numRecords" << totRecordCount
-                       << "overallStorageUsage" << (double) totRecLen / totExtentSpace;
-            }
-
-            {
-                scoped_ptr<BSONObjBuilder> headBuilder(NULL);
-                if (params.dumpTree) {
-                    headBuilder.reset(new BSONObjBuilder(result.subobjStart("head")));
-                }
-                scoped_ptr<BtreeInspector> inspector(NULL);
-                switch (details.version()) {
-                  case 1:
-                    inspector.reset(new BtreeInspectorV1()); break;
-                  case 0:
-                    inspector.reset(new BtreeInspectorV0()); break;
-                  default:
-                    errmsg = str::stream() << "index version " << details.version() << " is "
-                                           << "not supported";
-                    return false;
-                }
-                inspector->inspect(details.head, headBuilder.get());
-                inspector->stats.appendTo(result);
-            }
+        IndexDetails* detailsPtr = NULL;
+        for (NamespaceDetails::IndexIterator it = nsd->ii(); it.more(); ) {
+            IndexDetails& cur = it.next();
+            if (cur.indexName() == params.indexName) detailsPtr = &cur;
         }
+        if (detailsPtr == NULL) {
+            errmsg = "the requested index does not exist";
+            return false;
+        }
+        IndexDetails& details = *detailsPtr;
+        // IndexInterface& interface = details.idxInterface();
+        result << "name" << details.indexName()
+               << "version" << details.version()
+               << "isIdIndex" << details.isIdIndex()
+               << "keyPattern" << details.keyPattern()
+               << "storageNs" << details.indexNamespace();
+
+        if (params.analyzeStorage) {
+            NamespaceDetails* indexNsd = nsdetails(details.indexNamespace().c_str());
+            BSONArrayBuilder extentsArrayBuilder(result.subarrayStart("extents"));
+            unsigned int totRecordCount = 0;
+            unsigned int totRecLen = 0;
+            unsigned int totExtentSpace = 0;
+            for (Extent* ex = DataFileMgr::getExtent(indexNsd->firstExtent);
+                 ex != NULL; ex = ex->getNextExtent()) {
+
+                killCurrentOp.checkForInterrupt();
+
+                BSONObjBuilder extentBuilder(extentsArrayBuilder.subobjStart());
+                extentBuilder << "diskLoc" << ex->myLoc.toBSONObj()
+                              << "length" << ex->length;
+
+                unsigned int recordCount = 0;
+                unsigned int recLen = 0;
+                Record* r;
+                for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) {
+                    killCurrentOp.checkForInterrupt();
+                    r = dl.rec();
+
+                    recLen += r->lengthWithHeaders();
+                    totRecLen += r->lengthWithHeaders();
+                    ++recordCount;
+                    ++totRecordCount;
+                }
+                totExtentSpace += (ex->length - Extent::HeaderSize());
+
+                extentBuilder << "entries" << recordCount
+                              << "recLen" << recLen
+                              << "usage" << (double) recLen / (ex->length - Extent::HeaderSize());
+            }
+            extentsArrayBuilder.doneFast();
+            result << "numRecords" << totRecordCount
+                   << "overallStorageUsage" << (double) totRecLen / totExtentSpace;
+        }
+
+        scoped_ptr<BtreeInspector> inspector(NULL);
+        switch (details.version()) {
+          case 1:
+            inspector.reset(new BtreeInspectorV1(params.expandNodes)); break;
+          case 0:
+            inspector.reset(new BtreeInspectorV0(params.expandNodes)); break;
+          default:
+            errmsg = str::stream() << "index version " << details.version() << " is "
+                                   << "not supported";
+            return false;
+        }
+        inspector->inspect(details.head);
+        inspector->stats().appendTo(result);
+
         return true;
     }
 
