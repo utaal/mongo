@@ -348,10 +348,6 @@ String.prototype.endsWith = function (str){
     return new RegExp( RegExp.escape(str) + "$" ).test( this )
 }
 
-String.prototype.wrapInQuotes = function () {
-    return '"' + this.replace(/"/g, '\\"') + '"';
-}
-
 Number.prototype.zeroPad = function(width) {
     var str = this + '';
     while (str.length < width)
@@ -371,7 +367,8 @@ Date.timeFunc = function( theFunc , numTimes ){
     return (new Date()).getTime() - start.getTime();
 }
 
-Date.prototype.toISOString = function() {
+Date.prototype.tojson = function(){
+
     var UTC = Date.printAsUTC ? 'UTC' : '';
 
     var year = this['get'+UTC+'FullYear']().zeroPad(4);
@@ -394,15 +391,7 @@ Date.prototype.toISOString = function() {
         }
     }
 
-    return year+'-'+month+'-'+date+'T'+hour+':'+minute+':'+sec+ofs;
-}
-
-Date.prototype.tojson = function(){
-    return 'ISODate("' + this.toISOString() + '")';
-}
-
-Date.prototype.plainjson = function() {
-    return this.toISOString().wrapInQuotes();
+    return 'ISODate("'+year+'-'+month+'-'+date+'T'+hour+':'+minute+':'+sec+ofs+'")';
 }
 
 Date.printAsUTC = true;
@@ -478,7 +467,7 @@ Array.shuffle = function( arr ){
 }
 
 
-Array.tojson = function( a , indent , nolint, plainJson ){
+Array.tojson = function( a , indent , nolint ){
     var lineEnding = nolint ? " " : "\n";
 
     if (!indent) 
@@ -494,7 +483,7 @@ Array.tojson = function( a , indent , nolint, plainJson ){
     var s = "[" + lineEnding;
     indent += "\t";
     for ( var i=0; i<a.length; i++){
-        s += indent + tojson( a[i], indent , nolint, plainJson );
+        s += indent + tojson( a[i], indent , nolint );
         if ( i < a.length - 1 ){
             s += "," + lineEnding;
         }
@@ -506,10 +495,6 @@ Array.tojson = function( a , indent , nolint, plainJson ){
     indent = indent.substring(1);
     s += lineEnding+indent+"]";
     return s;
-}
-
-Array.plainjson = function(a, indent, nolint) {
-    return Array.tojson(a, indent, nolint, true);
 }
 
 Array.fetchRefs = function( arr , coll ){
@@ -582,20 +567,12 @@ NumberLong.prototype.tojson = function() {
     return this.toString();
 }
 
-NumberLong.prototype.plainjson = function() {
-    return this.toNumber();
-}
-
 if ( ! NumberInt.prototype ) {
     NumberInt.prototype = {}
 }
 
 NumberInt.prototype.tojson = function() {
     return this.toString();
-}
-
-NumberInt.prototype.plainjson = function() {
-    return this.toNumber();
 }
 
 if ( ! ObjectId.prototype )
@@ -607,10 +584,6 @@ ObjectId.prototype.toString = function(){
 
 ObjectId.prototype.tojson = function(){
     return this.toString();
-}
-
-ObjectId.prototype.plainjson = function() {
-    return tojson(this.str).wrapInQuotes();
 }
 
 ObjectId.prototype.valueOf = function(){
@@ -639,10 +612,6 @@ if ( typeof( DBPointer ) != "undefined" ){
         return this.toString();
     }
 
-    DBPointer.prototype.plainjson = function() {
-        return str.wrapInQuotes();
-    }
-
     DBPointer.prototype.getCollection = function(){
         return this.ns;
     }
@@ -667,12 +636,8 @@ if ( typeof( DBRef ) != "undefined" ){
         return db[ this.$ref ].findOne( { _id : this.$id } );
     }
     
-    DBRef.prototype.tojson = function(indent, plainJson){
+    DBRef.prototype.tojson = function(indent){
         return this.toString();
-    }
-
-    DBRef.prototype.plainjson = function(indent) {
-        return this.toString().wrapInQuotes();
     }
 
     DBRef.prototype.getCollection = function(){
@@ -700,10 +665,6 @@ if ( typeof( Timestamp ) != "undefined" ){
         return this.toString();
     }
 
-    Timestamp.prototype.plainjson = function() {
-        return this.toString().wrapInQuotes();
-    }
-
     Timestamp.prototype.getTime = function () {
         return this.t;
     }
@@ -723,10 +684,6 @@ else {
 if ( typeof( BinData ) != "undefined" ){
     BinData.prototype.tojson = function () {
         return this.toString();
-    }
-    
-    BinData.prototype.plainjson = function () {
-        return this.base64();
     }
     
     BinData.prototype.subtype = function () {
@@ -973,11 +930,11 @@ if ( typeof _threadInject != "undefined" ){
     }
 }
 
-tojsononeline = function( x, plainJson ){
-    return tojson( x , " " , true, plainJson );
+tojsononeline = function( x ){
+    return tojson( x , " " , true );
 }
 
-tojson = function( x, indent , nolint, plainJson ){
+tojson = function( x, indent , nolint ){
     if ( x === null )
         return "null";
     
@@ -1016,7 +973,7 @@ tojson = function( x, indent , nolint, plainJson ){
     case "boolean":
         return "" + x;
     case "object":{
-        var s = tojsonObject( x, indent , nolint, plainJson );
+        var s = tojsonObject( x, indent , nolint );
         if ( ( nolint == null || nolint == true ) && s.length < 80 && ( indent == null || indent.length == 0 ) ){
             s = s.replace( /[\s\r\n ]+/gm , " " );
         }
@@ -1030,7 +987,7 @@ tojson = function( x, indent , nolint, plainJson ){
     
 }
 
-tojsonObject = function( x, indent , nolint, plainJson ){
+tojsonObject = function( x, indent , nolint ){
     var lineEnding = nolint ? " " : "\n";
     var tabSpace = nolint ? "" : "\t";
     
@@ -1039,18 +996,6 @@ tojsonObject = function( x, indent , nolint, plainJson ){
     if (!indent) 
         indent = "";
     
-    if (plainJson) {
-        if (typeof(x.plainjson) == "function" && x.plainjson != plainjson) {
-            return x.plainjson(indent, nolint);
-        }
-
-        if (x.constructor && typeof(x.constructor.plainjson) == "function" &&
-            x.constructor.plainjson != plainjson) {
-            
-            return x.constructor.plainjson(x, indent, nolint);
-        }
-    }
-
     if ( typeof( x.tojson ) == "function" && x.tojson != tojson ) {
         return x.tojson(indent,nolint);
     }
@@ -1085,7 +1030,7 @@ tojsonObject = function( x, indent , nolint, plainJson ){
         if ( val == DB.prototype || val == DBCollection.prototype )
             continue;
 
-        s += indent + "\"" + k + "\" : " + tojson( val, indent , nolint, plainJson );
+        s += indent + "\"" + k + "\" : " + tojson( val, indent , nolint );
         if (num != total) {
             s += ",";
             num++;
@@ -1096,14 +1041,6 @@ tojsonObject = function( x, indent , nolint, plainJson ){
     // pop one level of indent
     indent = indent.substring(1);
     return s + indent + "}";
-}
-
-plainjson = function(x, indent, nolint) {
-    return tojson(x, indent, nolint, true);
-}
-
-plainjsononeline = function(x) {
-    return tojsononeline(x, true);
 }
 
 shellPrint = function( x ){

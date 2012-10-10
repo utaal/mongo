@@ -446,25 +446,16 @@ namespace mongo {
         return false;
     }
 
-    bool ProcessInfo::pageSizeSupported() {
-        return true;
-    }
-
-    size_t ProcessInfo::_pageSizeInternal;
-
-    size_t ProcessInfo::pageSize() {
-        if ( _pageSizeInternal == 0 ) {
-            _pageSizeInternal = sysconf( _SC_PAGESIZE );
-        }
-        return ProcessInfo::_pageSizeInternal;
-    }
-
     bool ProcessInfo::blockCheckSupported() {
         return true;
     }
 
     bool ProcessInfo::blockInMemory( char * start ) {
-        start = start - ( (unsigned long long)start % pageSize() );
+        static long pageSize = 0;
+        if ( pageSize == 0 ) {
+            pageSize = sysconf( _SC_PAGESIZE );
+        }
+        start = start - ( (unsigned long long)start % pageSize );
         unsigned char x = 0;
         if ( mincore( start , 128 , &x ) ) {
             log() << "mincore failed: " << errnoWithDescription() << endl;

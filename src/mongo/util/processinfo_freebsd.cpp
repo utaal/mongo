@@ -150,14 +150,6 @@ namespace mongo {
         return true;
     }
 
-    bool ProcessInfo::pageSizeSupported() {
-        return true;
-    }
-
-    size_t ProcessInfo::pageSize() {
-        return pageSizeBytes;
-    }
-
     inline char* getPageAddress(char* addr) {
         return reinterpret_cast<char*>(reinterpret_cast<uintptr_t>(addr) & ~(pageSizeBytes - 1));
     }

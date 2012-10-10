@@ -20,7 +20,6 @@
  */
 
 #include <assert.h>
-#include "math.h"
 #include "str.h"
 #include "html.h"
 
@@ -44,4 +43,3 @@ int main() {
     verify( str::after("abcde", 'x') == "" );
     return 0;
 }
-

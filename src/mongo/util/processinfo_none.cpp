@@ -57,15 +57,6 @@ namespace mongo {
         
     }
 
-    bool ProcessInfo::pageSizeSupported() {
-        return false;
-    }
-
-    size_t ProcessInfo::pageSize() {
-        verify(0);
-        return 0;
-    }
-
     bool ProcessInfo::blockInMemory( char * start ) {
         verify(0);
         return true;
