@@ -21,6 +21,7 @@
 #include <boost/accumulators/accumulators.hpp>
 #include <boost/accumulators/statistics/count.hpp>
 #include <boost/accumulators/statistics/density.hpp>
+#include <boost/accumulators/statistics/extended_p_square.hpp>
 #include <boost/accumulators/statistics/kurtosis.hpp>
 #include <boost/accumulators/statistics/mean.hpp>
 #include <boost/accumulators/statistics/median.hpp>
@@ -28,10 +29,14 @@
 #include <boost/accumulators/statistics/skewness.hpp>
 #include <boost/accumulators/statistics/stats.hpp>
 #include <boost/accumulators/statistics/variance.hpp>
+#include <boost/array.hpp>
 
 using namespace boost::accumulators;
 
 namespace mongo {
+
+    boost::array<double, 7> QUANTILES =
+            {{0.02, 0.09, 0.25, 0.50, 0.75, 0.91, 0.98}};
 
     /**
      * Descriptive stats calculator. Cleaner, specialized facade over boost.accumulators.
@@ -42,10 +47,14 @@ namespace mongo {
     class DescAccumul {
     public:
         DescAccumul(unsigned int numBins, unsigned int densityCache) :
-            _acc(tag::density::cache_size = densityCache, tag::density::num_bins = numBins),
+            _acc(tag::density::cache_size = densityCache,
+                 tag::density::num_bins = numBins,
+                 tag::extended_p_square::probabilities = QUANTILES),
             _densityCacheToGo(densityCache), _numBins(numBins) {
 
+            verify(numBins >= 10 && densityCache >= 10);
         }
+
 
         inline void put(T x) {
             _acc(x);
@@ -54,20 +63,43 @@ namespace mongo {
             }
         }
 
-        inline bool densityNeedsMore() const {
-            return _densityCacheToGo > 0;
+        inline bool densityIsReady() const {
+            return _densityCacheToGo <= 0;
         }
-
-
-        // T quant(int num) const;
-        //inline std::vector density(int num) const {
 
         inline int count() const { return extract::count(_acc); }
         inline double mean() const { return extract::mean(_acc); }
-        inline double median() const { return extract::median(_acc); }
+        inline double median() const { 
+            if (hasSensibleQuantiles()) return quantile(.5);
+            else if (densityIsReady()) return extract::median(_acc);
+            else {
+                verify(false);
+                return NAN;
+            }
+        }
         inline double variance() const { return extract::variance(_acc); }
         inline double skewness() const { return extract::skewness(_acc); }
         inline double kurtosis() const { return extract::kurtosis(_acc); }
+        double quantile(double prob) const {
+            for (unsigned int i = 0; i < QUANTILES.size(); ++i) {
+                if (prob == QUANTILES[i]) {
+                    return extract::extended_p_square(_acc)[i];
+                }
+            }
+            verify(false);
+            return NAN;
+        }
+        bool hasSensibleQuantiles() const {
+            double prev = extract::extended_p_square(_acc)[0];
+            for (unsigned int i = 1; i < QUANTILES.size(); ++i) {
+                double cur = extract::extended_p_square(_acc)[i];
+                if (prev > cur) {
+                    return false;
+                }
+                prev = cur;
+            }
+            return true;
+        }
 
         BSONObj toBSONObj() const {
             BSONObjBuilder b;
@@ -77,9 +109,19 @@ namespace mongo {
               << "skewness" << skewness()
               << "kurtosis" << kurtosis();
 
-            if (!densityNeedsMore()) {
+            if (densityIsReady() || hasSensibleQuantiles()) {
                 b << "median" << median();
+            }
 
+            if (hasSensibleQuantiles()) {
+                BSONObjBuilder quantilesObjBuilder(b.subobjStart("quantiles"));
+                for (unsigned int i = 0; i < QUANTILES.size(); ++i) {
+                    string qnt = str::stream() << QUANTILES[i];
+                    quantilesObjBuilder << qnt << extract::extended_p_square(_acc)[i];
+                }
+            }
+
+            if (densityIsReady()) {
                 BSONObjBuilder densityBuilder(b.subobjStart("density"));
                 boost::iterator_range<typename vector<pair<double, double> >::iterator> rng =
                         extract::density(_acc);
@@ -98,6 +140,7 @@ namespace mongo {
     private:
         accumulator_set<T, stats<tag::count,
                                  tag::density,
+                                 tag::extended_p_square,
                                  tag::mean,
                                  tag::median(with_density),
                                  tag::variance,
@@ -108,3 +151,4 @@ namespace mongo {
     };
 
 }
+
