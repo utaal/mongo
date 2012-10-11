@@ -23,6 +23,8 @@
 #include <string>
 #include <vector>
 
+#include <boost/optional.hpp>
+
 #include "mongo/base/disallow_copying.h"
 #include "mongo/db/btree.h"
 #include "mongo/db/commands.h"
@@ -71,6 +73,8 @@ namespace mongo {
         unsigned int totalKeyNodeBytes;
         unsigned int totalKeys;
         unsigned int usedKeys;
+        boost::optional<BSONObj> firstKey;
+        boost::optional<BSONObj> lastKey;
 
         AreaStats() : numBuckets(0), totalBsonBytes(0), totalEmptyBytes(0), totalKeyNodeBytes(0),
                       totalKeys(0), usedKeys(0) {
@@ -92,24 +96,30 @@ namespace mongo {
         }
 
         AreaStats& root() {
-            return branch.at(0).at(0);
+            verify(branch.size() > 0); verify(branch[0].size() > 0);
+            return branch[0][0];
         }
 
         const AreaStats& root() const {
-            return branch.at(0).at(0);
+            verify(branch.size() > 0); verify(branch[0].size() > 0);
+            return branch[0][0];
         }
 
-        AreaStats& nodeAt(unsigned int depth_, int childNum) {
-            return branch.at(depth_).at(childNum);
+        AreaStats& nodeAt(unsigned int depth_, unsigned int childNum) {
+            verify(branch.size() > depth_); verify(branch[depth_].size() > childNum);
+            return branch[depth_][childNum];
         }
 
-        void newBranchLevel(unsigned int depth_, int childrenCount) {
+        void newBranchLevel(unsigned int depth_, unsigned int childrenCount) {
             verify(branch.size() == depth_ + 1);
             branch.push_back(vector<AreaStats>(childrenCount));
         }
 
         void appendTo(BSONObjBuilder& builder) const {
-            root().appendTo(builder, this);
+            {
+                BSONObjBuilder rootBuilder(builder.subobjStart("root"));
+                root().appendTo(rootBuilder, this);
+            }
             builder << "bucketBodyBytes" << bucketBodyBytes;
             builder << "depth" << depth;
             {
@@ -121,10 +131,12 @@ namespace mongo {
                     it->appendTo(levelBuilder, this);
                 }
             }
-            {
+            if (branch.size() > 1) {
                 BSONArrayBuilder expandedNodesArrayBuilder(builder.subarrayStart("expandedNodes"));
                 for (unsigned int depth = 1; depth < branch.size(); ++depth) {
-                    BSONArrayBuilder childrenArrayBuilder(expandedNodesArrayBuilder.subarrayStart());
+
+                    BSONArrayBuilder childrenArrayBuilder(
+                            expandedNodesArrayBuilder.subarrayStart());
                     const vector<AreaStats>& children = branch[depth];
                     for (unsigned int child = 1; child < children.size(); ++child) {
                         BSONObjBuilder childBuilder(childrenArrayBuilder.subobjStart());
@@ -173,6 +185,8 @@ namespace mongo {
                 << "bsonRatio" << calc.ratio(totalBsonBytes)
                 << "emptyRatio" << calc.ratio(totalEmptyBytes)
                 << "keyNodesRatio" << calc.ratio(totalKeyNodeBytes);
+        if (firstKey) builder << "firstKey" << *firstKey;
+        if (lastKey) builder << "lastKey" << *lastKey;
     }
 
     class BtreeInspector {
@@ -207,8 +221,8 @@ namespace mongo {
         }
 
     private:
-        bool inspectBucket(const DiskLoc& dl, unsigned int depth, int childNum, bool expandedBranch,
-                           vector<int> expandedAncestors);
+        bool inspectBucket(const DiskLoc& dl, unsigned int depth, int childNum,
+                           bool parentIsExpanded, vector<int> expandedAncestors);
 
         vector<int> _expandNodes;
         BtreeStats _stats;
@@ -237,7 +251,7 @@ namespace mongo {
 
     template <class Version>
     bool BtreeInspectorImpl<Version>::inspectBucket(const DiskLoc& dl, unsigned int depth,
-                                                    int childNum, bool expandedBranch,
+                                                    int childNum, bool parentIsExpanded,
                                                     vector<int> expandedAncestors) {
         if (dl.isNull()) return true;
 
@@ -249,13 +263,20 @@ namespace mongo {
         int keyCount = bucket->getN();
         int childrenCount = keyCount + 1;
 
-        if (expandedBranch) {
+        bool curNodeIsExpanded = false;
+        if (parentIsExpanded) {
             expandedAncestors.push_back(childNum);
             if (depth < _expandNodes.size() && _expandNodes[depth] == childNum) {
                 _stats.newBranchLevel(depth, childrenCount);
-            } else {
-                expandedBranch = false;
+                curNodeIsExpanded = true;
             }
+
+            AreaStats& curNodeStats = _stats.nodeAt(depth, childNum);
+            // TODO(andrea.lattuada) make sure key node is used (non-empty)
+            if (bucket->getN() > 0)
+                curNodeStats.firstKey = bucket->keyAt(0).toBson();
+            if (bucket->getN() > 1)
+                curNodeStats.lastKey = bucket->keyAt(bucket->getN() - 1).toBson();
         }
 
         for (int i = 0; i < keyCount; i++ ) {
@@ -263,11 +284,11 @@ namespace mongo {
 
             if ( kn.isUsed() ) {
                 ++usedKeyCount;
-                this->inspectBucket(kn.prevChildBucket, depth + 1, i, expandedBranch,
+                this->inspectBucket(kn.prevChildBucket, depth + 1, i, curNodeIsExpanded,
                                     expandedAncestors);
             }
         }
-        this->inspectBucket(bucket->getNextChild(), depth + 1, keyCount, expandedBranch,
+        this->inspectBucket(bucket->getNextChild(), depth + 1, keyCount, curNodeIsExpanded,
                             expandedAncestors);
 
         if (depth > _stats.depth) _stats.depth = depth;
@@ -277,7 +298,8 @@ namespace mongo {
         }
         while (_stats.perLevel.size() < depth + 1)
             _stats.perLevel.push_back(AreaStats());
-        AreaStats& level = _stats.perLevel.at(depth);
+        verify(_stats.perLevel.size() > depth);
+        AreaStats& level = _stats.perLevel[depth];
         addTo(level, keyCount, usedKeyCount, bucket, sizeof(_KeyNode));
 
         // if (bucketBuilder != NULL) {
