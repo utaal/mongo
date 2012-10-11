@@ -305,27 +305,6 @@ namespace mongo {
         AreaStats& level = _stats.perLevel[depth];
         addTo(level, keyCount, usedKeyCount, bucket, sizeof(_KeyNode));
 
-        // if (bucketBuilder != NULL) {
-        //     *bucketBuilder << "n" << bucket->getN()
-        //                    << "depth" << depth
-        //                    << "usedKeys" << usedKeyCount
-        //                    << "totalKeys" << totalKeyCount
-        //                    << "diskLoc" << dl.toBSONObj();
-        // }
-
-        // if (bucketBuilder != NULL) {
-        //     if (bucket->getN() > 0) {
-        //         const KeyNode& firstKeyNode = bucket->keyNode(0);
-        //         const Key& key = firstKeyNode.key;
-        //         bucketBuilder->append("firstKey", key.toBson());
-        //         if (bucket->getN() > 1) {
-        //             const KeyNode& lastKeyNode =
-        //                     bucket->keyNode(bucket->getN() - 1);
-        //             const Key& key = lastKeyNode.key;
-        //             bucketBuilder->append("lastKey", key.toBson());
-        //         }
-        //     }
-        // }
         return true;
     }
 
