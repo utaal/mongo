@@ -75,6 +75,7 @@ namespace mongo {
         unsigned int usedKeys;
         boost::optional<BSONObj> firstKey;
         boost::optional<BSONObj> lastKey;
+        boost::optional<BSONObj> diskLoc;
 
         AreaStats() : numBuckets(0), totalBsonBytes(0), totalEmptyBytes(0), totalKeyNodeBytes(0),
                       totalKeys(0), usedKeys(0) {
@@ -96,22 +97,22 @@ namespace mongo {
         }
 
         AreaStats& root() {
-            verify(branch.size() > 0); verify(branch[0].size() > 0);
+            dassert(branch.size() > 0); dassert(branch[0].size() > 0);
             return branch[0][0];
         }
 
         const AreaStats& root() const {
-            verify(branch.size() > 0); verify(branch[0].size() > 0);
+            dassert(branch.size() > 0); dassert(branch[0].size() > 0);
             return branch[0][0];
         }
 
         AreaStats& nodeAt(unsigned int depth_, unsigned int childNum) {
-            verify(branch.size() > depth_); verify(branch[depth_].size() > childNum);
+            dassert(branch.size() > depth_); dassert(branch[depth_].size() > childNum);
             return branch[depth_][childNum];
         }
 
         void newBranchLevel(unsigned int depth_, unsigned int childrenCount) {
-            verify(branch.size() == depth_ + 1);
+            dassert(branch.size() == depth_ + 1);
             branch.push_back(vector<AreaStats>(childrenCount));
         }
 
@@ -187,6 +188,7 @@ namespace mongo {
                 << "keyNodesRatio" << calc.ratio(totalKeyNodeBytes);
         if (firstKey) builder << "firstKey" << *firstKey;
         if (lastKey) builder << "lastKey" << *lastKey;
+        if (diskLoc) builder << "diskLoc" << *diskLoc;
     }
 
     class BtreeInspector {
@@ -277,6 +279,7 @@ namespace mongo {
                 curNodeStats.firstKey = bucket->keyAt(0).toBson();
             if (bucket->getN() > 1)
                 curNodeStats.lastKey = bucket->keyAt(bucket->getN() - 1).toBson();
+            curNodeStats.diskLoc = dl.toBSONObj();
         }
 
         for (int i = 0; i < keyCount; i++ ) {
@@ -298,7 +301,7 @@ namespace mongo {
         }
         while (_stats.perLevel.size() < depth + 1)
             _stats.perLevel.push_back(AreaStats());
-        verify(_stats.perLevel.size() > depth);
+        dassert(_stats.perLevel.size() > depth);
         AreaStats& level = _stats.perLevel[depth];
         addTo(level, keyCount, usedKeyCount, bucket, sizeof(_KeyNode));
 
