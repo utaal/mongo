@@ -32,6 +32,7 @@
 #include "mongo/db/index.h"
 #include "mongo/db/jsobj.h"
 #include "mongo/db/namespace_details.h"
+#include "mongo/util/desc_accumul.h"
 
 namespace mongo {
 
@@ -76,10 +77,13 @@ namespace mongo {
         boost::optional<BSONObj> firstKey;
         boost::optional<BSONObj> lastKey;
         boost::optional<BSONObj> diskLoc;
+        DescAccumul<double> a;
+        DescAccumul<double> b;
 
         AreaStats() : numBuckets(0), totalBsonBytes(0), totalEmptyBytes(0), totalKeyNodeBytes(0),
-                      totalKeys(0), usedKeys(0) {
+                      totalKeys(0), usedKeys(0), a(10, 10), b(10, 10) {
         }
+
         virtual ~AreaStats() {
         }
 
