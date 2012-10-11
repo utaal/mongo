@@ -100,28 +100,39 @@ namespace mongo {
             return branch.at(0).at(0);
         }
 
-        vector<AreaStats>& branchAtDepth(int depth) {
-            return branch.at(depth + 1);
+        AreaStats& nodeAt(int depth, int childNum) {
+            return branch.at(depth).at(childNum);
         }
 
-        vector<AreaStats>& newBranchLevel(int depth, int childrenCount) {
+        void newBranchLevel(int depth, int childrenCount) {
             verify(branch.size() == depth + 1);
             branch.push_back(vector<AreaStats>(childrenCount));
-            return branchAtDepth(depth + 1);
         }
 
         void appendTo(BSONObjBuilder& builder) const {
             root().appendTo(builder, this);
             builder << "bucketBodySize" << bucketBodySize;
             builder << "depth" << depth;
-            BSONArrayBuilder perLevelArrayBuilder(builder.subarrayStart("perLevel"));
-            for (vector<AreaStats>::const_iterator it = perLevel.begin();
-                 it != perLevel.end();
-                 ++it) {
-                BSONObjBuilder levelBuilder(perLevelArrayBuilder.subobjStart());
-                it->appendTo(levelBuilder, this);
+            {
+                BSONArrayBuilder perLevelArrayBuilder(builder.subarrayStart("perLevel"));
+                for (vector<AreaStats>::const_iterator it = perLevel.begin();
+                     it != perLevel.end();
+                     ++it) {
+                    BSONObjBuilder levelBuilder(perLevelArrayBuilder.subobjStart());
+                    it->appendTo(levelBuilder, this);
+                }
             }
-            perLevelArrayBuilder.doneFast();
+            {
+                BSONArrayBuilder expandedNodesArrayBuilder(builder.subarrayStart("expandedNodes"));
+                for (int depth = 1; depth < branch.size(); ++depth) {
+                    BSONArrayBuilder childrenArrayBuilder(expandedNodesArrayBuilder.subarrayStart());
+                    const vector<AreaStats>& children = branch[depth];
+                    for (int child = 1; child < children.size(); ++child) {
+                        BSONObjBuilder childBuilder(childrenArrayBuilder.subobjStart());
+                        children[child].appendTo(childBuilder, this);
+                    }
+                }
+            }
         }
     };
 
@@ -198,7 +209,7 @@ namespace mongo {
         }
 
     private:
-        bool inspectBucket(const DiskLoc& dl, int depth, int childNum, bool expandedBranch, list<AreaStats*> branchStats);
+        bool inspectBucket(const DiskLoc& dl, int depth, int childNum, bool expandedBranch, vector<int> expandedAncestors);
 
         vector<int> _expandNodes;
         BtreeStats _stats;
@@ -210,27 +221,25 @@ namespace mongo {
     template <class Version>
     bool BtreeInspectorImpl<Version>::inspect(DiskLoc& head) {
         _stats.bucketBodySize = BucketBasics::bodySize();
-        list<AreaStats*> branchStats;
-        branchStats.push_back(&_stats.root());
-        return this->inspectBucket(head, 0, 0, true, branchStats);
+        vector<int> expandedAncestors;
+        return this->inspectBucket(head, 0, 0, true, expandedAncestors);
     }
 
     template <class Version>
-    void addTo(AreaStats* stats, int totalKeyCount, int usedKeyCount, const BtreeBucket<Version>* bucket, int keyNodeSize) {
-        stats->numBuckets += 1;
-        stats->totalKeys += totalKeyCount;
-        stats->usedKeys += usedKeyCount;
-        stats->totalBsonSize += bucket->getBsonSize();
-        stats->totalEmptySize += bucket->getEmptySize();
-        stats->totalKeyNodeSize += keyNodeSize * totalKeyCount;
+    void addTo(AreaStats& stats, int totalKeyCount, int usedKeyCount, const BtreeBucket<Version>* bucket, int keyNodeSize) {
+        stats.numBuckets += 1;
+        stats.totalKeys += totalKeyCount;
+        stats.usedKeys += usedKeyCount;
+        stats.totalBsonSize += bucket->getBsonSize();
+        stats.totalEmptySize += bucket->getEmptySize();
+        stats.totalKeyNodeSize += keyNodeSize * totalKeyCount;
     }
 
     template <class Version>
-    bool BtreeInspectorImpl<Version>::inspectBucket(const DiskLoc& dl, int depth, int childNum, bool expandedBranch, list<AreaStats*> branchStats) {
+    bool BtreeInspectorImpl<Version>::inspectBucket(const DiskLoc& dl, int depth, int childNum, bool expandedBranch, vector<int> expandedAncestors) {
         if (dl.isNull()) return true;
 
         const BtreeBucket<Version>* bucket = dl.btree<Version>();
-        PRINT("+++");
         int usedKeyCount = 0;
 
         killCurrentOp.checkForInterrupt();
@@ -239,7 +248,9 @@ namespace mongo {
         int childrenCount = keyCount + 1;
 
         if (expandedBranch) {
+            expandedAncestors.push_back(childNum);
             if (depth < _expandNodes.size() && _expandNodes[depth] == childNum) {
+                 PRINT("deeper");
                 _stats.newBranchLevel(depth, childrenCount);
             } else {
                 expandedBranch = false;
@@ -251,19 +262,19 @@ namespace mongo {
 
             if ( kn.isUsed() ) {
                 ++usedKeyCount;
-                this->inspectBucket(kn.prevChildBucket, depth + 1, i, expandedBranch, branchStats);
+                this->inspectBucket(kn.prevChildBucket, depth + 1, i, expandedBranch, expandedAncestors);
             }
         }
-        this->inspectBucket(bucket->getNextChild(), depth + 1, keyCount, expandedBranch, branchStats);
+        this->inspectBucket(bucket->getNextChild(), depth + 1, keyCount, expandedBranch, expandedAncestors);
 
         if (depth > _stats.depth) _stats.depth = depth;
-        for (list<AreaStats*>::iterator it = branchStats.begin(); it != branchStats.end(); ++it) {
-            addTo(*it, keyCount, usedKeyCount, bucket, sizeof(_KeyNode));
+        for (int d = 0; d < expandedAncestors.size(); ++d) {
+            addTo(_stats.nodeAt(d, expandedAncestors.at(d)), keyCount, usedKeyCount, bucket, sizeof(_KeyNode));
         }
         while (_stats.perLevel.size() < depth + 1)
             _stats.perLevel.push_back(AreaStats());
         AreaStats& level = _stats.perLevel.at(depth);
-        addTo(&level, keyCount, usedKeyCount, bucket, sizeof(_KeyNode));
+        addTo(level, keyCount, usedKeyCount, bucket, sizeof(_KeyNode));
 
         // if (bucketBuilder != NULL) {
         //     *bucketBuilder << "n" << bucket->getN()
