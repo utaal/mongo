@@ -27,19 +27,11 @@ using namespace mongoutils;
 
 namespace mongo {
 
-    template class DescAccumul<unsigned int>;
-    template class DescAccumul<double>;
-
-    boost::array<double, 7> QUANTILES = {{0.02, 0.09, 0.25, 0.50, 0.75, 0.91, 0.98}};
+    boost::array<double, 9> QUANTILES = {{.01, .02, .09, .25, .50, .75, .91, .98, .99}};
 
     template <class T>
     double DescAccumul<T>::median() const {
-        if (hasSensibleQuantiles()) return quantile(.5);
-        else if (densityIsReady()) return extract::median(_acc);
-        else {
-            verify(false);
-            return NAN;
-        }
+        return hasSensibleQuantiles() ? quantile(.5) : NAN;
     }
 
     template <class T>
@@ -70,12 +62,19 @@ namespace mongo {
     BSONObj DescAccumul<T>::toBSONObj() const {
         BSONObjBuilder b;
         b << "count" << count()
-          << "mean" << mean()
-          << "variance" << variance()
+          << "mean" << mean();
+
+        if (count() <= 1) {
+            return b.obj();
+        }
+
+        b << "min" << min()
+          << "max" << max()
+          << "stddev" << stddev()
           << "skewness" << skewness()
           << "kurtosis" << kurtosis();
 
-        if (densityIsReady() || hasSensibleQuantiles()) {
+        if (hasSensibleQuantiles()) {
             b << "median" << median();
         }
 
@@ -87,20 +86,10 @@ namespace mongo {
             }
         }
 
-        if (densityIsReady()) {
-            BSONObjBuilder densityBuilder(b.subobjStart("density"));
-            boost::iterator_range<typename vector<pair<double, double> >::iterator> rng =
-                    extract::density(_acc);
-
-            for (typename vector<pair<double, double> >::iterator it = rng.begin();
-                 it != rng.end();
-                 ++it) {
-
-                string bin = str::stream() << it->first;
-                densityBuilder << bin << it->second;
-            }
-        }
         return b.obj();
     }
+
+    template class DescAccumul<unsigned int>;
+    template class DescAccumul<double>;
 
 }

@@ -68,26 +68,48 @@ namespace mongo {
     struct BtreeStats;
 
     struct AreaStats {
-        unsigned int numBuckets;
-        unsigned int totalBsonBytes;
-        unsigned int totalEmptyBytes;
-        unsigned int totalKeyNodeBytes;
-        unsigned int totalKeys;
-        unsigned int usedKeys;
         boost::optional<BSONObj> firstKey;
         boost::optional<BSONObj> lastKey;
         boost::optional<BSONObj> diskLoc;
-        DescAccumul<double> a;
-        DescAccumul<double> b;
+        boost::optional<unsigned int> childNum;
+        boost::optional<unsigned int> childrenCount;
+        boost::optional<unsigned int> bucketUsedKeyCount;
+        boost::optional<unsigned int> depth;
 
-        AreaStats() : numBuckets(0), totalBsonBytes(0), totalEmptyBytes(0), totalKeyNodeBytes(0),
-                      totalKeys(0), usedKeys(0), a(10, 10), b(10, 10) {
+        unsigned int numBuckets;
+        DescAccumul<unsigned int> bsonBytes;
+        DescAccumul<double> bsonRatio;
+        DescAccumul<unsigned int> emptyBytes;
+        DescAccumul<double> emptyRatio;
+        DescAccumul<unsigned int> keyNodeBytes;
+        DescAccumul<double> keyNodeRatio;
+        DescAccumul<unsigned int> keyCount;
+        DescAccumul<unsigned int> usedKeyCount;
+
+        AreaStats() : numBuckets(0) {
         }
 
         virtual ~AreaStats() {
         }
 
-        void appendTo(BSONObjBuilder& builder, const BtreeStats* globalStats) const;
+        void appendTo(BSONObjBuilder& builder, const BtreeStats* globalStats) const {
+            builder << "numBuckets" << numBuckets
+                    << "keyCount" << keyCount.toBSONObj()
+                    << "usedKeyCount" << usedKeyCount.toBSONObj()
+                    << "bsonBytes" << bsonBytes.toBSONObj()
+                    << "bsonRatio" << bsonRatio.toBSONObj()
+                    << "keyNodeBytes" << keyNodeBytes.toBSONObj()
+                    << "keyNodeRatio" << keyNodeRatio.toBSONObj()
+                    << "emptyBytes" << emptyBytes.toBSONObj()
+                    << "emptyRatio" << emptyRatio.toBSONObj();
+            if (childNum) builder << "childNum" << *childNum;
+            if (childrenCount) builder << "childrenCount" << *childrenCount;
+            if (bucketUsedKeyCount) builder << "bucketUsedKeyCount" << *bucketUsedKeyCount;
+            if (firstKey) builder << "firstKey" << *firstKey;
+            if (lastKey) builder << "lastKey" << *lastKey;
+            if (diskLoc) builder << "diskLoc" << *diskLoc;
+            if (depth) builder << "depth" << *depth;
+        }
     };
 
     struct BtreeStats {
@@ -143,7 +165,7 @@ namespace mongo {
                     BSONArrayBuilder childrenArrayBuilder(
                             expandedNodesArrayBuilder.subarrayStart());
                     const vector<AreaStats>& children = branch[depth];
-                    for (unsigned int child = 1; child < children.size(); ++child) {
+                    for (unsigned int child = 0; child < children.size(); ++child) {
                         BSONObjBuilder childBuilder(childrenArrayBuilder.subobjStart());
                         children[child].appendTo(childBuilder, this);
                     }
@@ -156,44 +178,6 @@ namespace mongo {
         return (double) sum / count;
     }
 
-    class StatsCalc {
-    public:
-        StatsCalc(unsigned int numBuckets, unsigned int bucketBodyBytes) :
-            _numBuckets(numBuckets), _bucketBodyBytes(bucketBodyBytes) {
-        }
-
-        inline double avg(unsigned int val) {
-            return (double) val / _numBuckets;
-        }
-
-        inline double ratio(unsigned int size) {
-            return (double) size / _bucketBodyBytes / _numBuckets;
-        }
-
-    private:
-        unsigned int _numBuckets;
-        unsigned int _bucketBodyBytes;
-    };
-
-    void AreaStats::appendTo(BSONObjBuilder& builder, const BtreeStats* globalStats) const {
-        StatsCalc calc(numBuckets, globalStats->bucketBodyBytes);
-        builder << "numBuckets" << numBuckets
-                << "usedKeys" << usedKeys
-                << "totalKeys" << totalKeys
-                << "avgUsedKeysPerBucket" << calc.avg(usedKeys)
-                << "totalBsonBytes" << totalBsonBytes
-                << "avgBsonBytes" << calc.avg(totalBsonBytes)
-                << "totalEmptyBytes" << totalEmptyBytes
-                << "avgEmptyBytes" << calc.avg(totalEmptyBytes)
-                << "totalKeyNodeBytes" << totalKeyNodeBytes
-                << "avgKeyNodeBytes" << calc.avg(totalKeyNodeBytes)
-                << "bsonRatio" << calc.ratio(totalBsonBytes)
-                << "emptyRatio" << calc.ratio(totalEmptyBytes)
-                << "keyNodesRatio" << calc.ratio(totalKeyNodeBytes);
-        if (firstKey) builder << "firstKey" << *firstKey;
-        if (lastKey) builder << "lastKey" << *lastKey;
-        if (diskLoc) builder << "diskLoc" << *diskLoc;
-    }
 
     class BtreeInspector {
     public:
@@ -248,11 +232,14 @@ namespace mongo {
     void addTo(AreaStats& stats, int totalKeyCount, int usedKeyCount,
                const BtreeBucket<Version>* bucket, int keyNodeBytes) {
         stats.numBuckets += 1;
-        stats.totalKeys += totalKeyCount;
-        stats.usedKeys += usedKeyCount;
-        stats.totalBsonBytes += bucket->getBsonSize();
-        stats.totalEmptyBytes += bucket->getEmptySize();
-        stats.totalKeyNodeBytes += keyNodeBytes * totalKeyCount;
+        stats.keyCount += totalKeyCount;
+        stats.usedKeyCount += usedKeyCount;
+        stats.bsonBytes += bucket->getBsonSize();
+        stats.emptyBytes += bucket->getEmptySize();
+        stats.keyNodeBytes += keyNodeBytes * totalKeyCount;
+        stats.bsonRatio += double(bucket->getBsonSize()) / bucket->bodySize();
+        stats.keyNodeRatio += double(keyNodeBytes * totalKeyCount) / bucket->bodySize();
+        stats.emptyRatio += double(bucket->getEmptySize()) / bucket->bodySize();
     }
 
     template <class Version>
@@ -272,7 +259,11 @@ namespace mongo {
         bool curNodeIsExpanded = false;
         if (parentIsExpanded) {
             expandedAncestors.push_back(childNum);
+            if (depth < _expandNodes.size()) {
+                PRINT("child"); PRINT(childNum); PRINT(childrenCount);
+            }
             if (depth < _expandNodes.size() && _expandNodes[depth] == childNum) {
+                PRINT("new branch level"); PRINT(childNum); PRINT(childrenCount);
                 _stats.newBranchLevel(depth, childrenCount);
                 curNodeIsExpanded = true;
             }
@@ -284,6 +275,9 @@ namespace mongo {
             if (bucket->getN() > 1)
                 curNodeStats.lastKey = bucket->keyAt(bucket->getN() - 1).toBson();
             curNodeStats.diskLoc = dl.toBSONObj();
+            curNodeStats.childrenCount = childrenCount;
+            curNodeStats.depth = depth;
+            curNodeStats.childNum = childNum;
         }
 
         for (int i = 0; i < keyCount; i++ ) {
@@ -297,6 +291,11 @@ namespace mongo {
         }
         this->inspectBucket(bucket->getNextChild(), depth + 1, keyCount, curNodeIsExpanded,
                             expandedAncestors);
+
+        if (parentIsExpanded) {
+            AreaStats& curNodeStats = _stats.nodeAt(depth, childNum);
+            curNodeStats.bucketUsedKeyCount = bucket->getN();
+        }
 
         if (depth > _stats.depth) _stats.depth = depth;
         for (unsigned int d = 0; d < expandedAncestors.size(); ++d) {

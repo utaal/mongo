@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include <cmath>
 #include <string>
 
 #include <boost/accumulators/accumulators.hpp>
@@ -38,34 +39,22 @@ namespace mongo {
     using boost::accumulators::accumulator_set;
     using boost::accumulators::stats;
 
-    extern boost::array<double, 7> QUANTILES;
+    extern boost::array<double, 9> QUANTILES;
 
     /**
      * Descriptive stats calculator. Cleaner, specialized facade over boost.accumulators.
      * Add values using put(val), retrieve stats using accessors or toBSONObj().
-     * Density will only be available after _densityCache_ values have been inserted.
      */
     template <class T>
     class DescAccumul {
     public:
-        DescAccumul(unsigned int numBins = 10, unsigned int densityCache = 15) :
-                _acc(boost::accumulators::tag::density::cache_size = densityCache,
-                     boost::accumulators::tag::density::num_bins = numBins,
-                     boost::accumulators::tag::extended_p_square::probabilities = QUANTILES),
-                _densityCacheToGo(densityCache), _numBins(numBins) {
-
-            verify(numBins >= 10 && densityCache >= 10);
+        DescAccumul() :
+                _acc(boost::accumulators::tag::extended_p_square::probabilities = QUANTILES) {
         }
 
-        inline void put(T x) {
+        inline const DescAccumul& operator+=(T x) {
             _acc(x);
-            if (_densityCacheToGo > 0) {
-                _densityCacheToGo--;
-            }
-        }
-
-        inline bool densityIsReady() const {
-            return _densityCacheToGo <= 0;
+            return *this;
         }
 
         inline int count() const { return boost::accumulators::extract::count(_acc); }
@@ -74,29 +63,35 @@ namespace mongo {
 
         double median() const;
 
-        inline double variance() const { return boost::accumulators::extract::variance(_acc); }
+        inline double stddev() const {
+            return std::sqrt(boost::accumulators::extract::variance(_acc));
+        }
 
         inline double skewness() const { return boost::accumulators::extract::skewness(_acc); }
 
         inline double kurtosis() const { return boost::accumulators::extract::kurtosis(_acc); }
 
+        inline double max() const { return boost::accumulators::extract::max(_acc); }
+
+        inline double min() const { return boost::accumulators::extract::min(_acc); }
+
         double quantile(double prob) const;
 
         bool hasSensibleQuantiles() const;
+
+        const string toString() const;
 
         BSONObj toBSONObj() const;
 
     private:
         accumulator_set<T, stats<boost::accumulators::tag::count,
-                                 boost::accumulators::tag::density,
                                  boost::accumulators::tag::extended_p_square,
                                  boost::accumulators::tag::mean,
-                                 boost::accumulators::tag::median(
-                                         boost::accumulators::with_density),
+                                 boost::accumulators::tag::max,
+                                 boost::accumulators::tag::min,
                                  boost::accumulators::tag::variance,
                                  boost::accumulators::tag::kurtosis,
                                  boost::accumulators::tag::skewness> > _acc;
-        unsigned int _densityCacheToGo;
         unsigned int _numBins;
     };
 

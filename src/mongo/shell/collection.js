@@ -435,6 +435,105 @@ DBCollection.prototype.indexStats = function(params) {
     return this._db.runCommand( cmd );
 }
 
+DBCollection.prototype.printIndexStats = function(params) {
+    var stats = this.indexStats(params);
+    if (!stats.ok) {
+        print("error executing indexStats command: " + stats.errmsg);
+    }
+
+    print("-- index \"" + stats.name + "\" --");
+    print("  version " + stats.version + " | key pattern " +
+          tojsononeline(stats.keyPattern) + (stats.isIdIndex ? " [id index]" : "") +
+          " | storage namespace \"" + stats.storageNs + "\"");
+    print("  " + stats.depth + " deep");
+    print();
+    print("  **  min |-- .02 quant --- 1st quartile [=== median ===] 3rd quartile --- " +
+          ".98 quant --| max  **  ");
+    print();
+
+    var fnum = function(n) {
+        return n.toFixed(3);
+    }
+
+    var formatStats = function(st) {
+        var out = "";
+        if (st.count == 0) return "no samples";
+        out += "avg. " + fnum(st.mean);
+        if (st.count == 1) return out;
+        out += " | stdev. " + fnum(st.stddev);
+
+        var quant = function(st, prob) {
+            return st.quantiles["" + prob].toFixed(2);
+        }
+        if (st.quantiles) {
+            out += "\t" + fnum(st.min) + " |-- " + quant(st, 0.02) + " --- " + quant(st, 0.25) +
+                   " [=== " + quant(st, 0.5) + " ===] " + quant(st, 0.75) + " --- " +
+                   quant(st, 0.98) + " --| " + fnum(st.max) + " ";
+        }
+        return out;
+    }
+
+    var formatNode = function(indent, nd) {
+        var out = "";
+        out += indent + "bucket count\t" + nd.numBuckets
+                      + "\ton average " + fnum((1 - nd.emptyRatio.mean) * 100) + " %"
+                      + " (±" + fnum((nd.emptyRatio.stddev) * 100) + " %) full"
+                      + "\t" + fnum(nd.bsonRatio.mean * 100) + " %"
+                      + " (±" + fnum((nd.bsonRatio.stddev) * 100) + " %) bson keys, "
+                      + fnum(nd.keyNodeRatio.mean * 100) + " %"
+                      + " (±" + fnum((nd.keyNodeRatio.stddev) * 100) + " %) key nodes\n";
+        out += indent + "\n";
+        out += indent + "key count\t" + formatStats(nd.keyCount) + "\n";
+        out += indent + "used keys\t" + formatStats(nd.usedKeyCount) + "\n";
+        out += indent + "space occupied by (bytes)\n";
+        out += indent + "  key nodes\t" + formatStats(nd.keyNodeBytes) + "\n";
+        out += indent + "  key objs \t" + formatStats(nd.bsonBytes) + "\n";
+        out += indent + "  empty    \t" + formatStats(nd.emptyBytes) + "\n";
+        out += indent + "space occupied by (ratio of bucket)\n";
+        out += indent + "  key nodes\t" + formatStats(nd.keyNodeRatio) + "\n";
+        out += indent + "  key objs \t" + formatStats(nd.bsonRatio) + "\n";
+        out += indent + "  empty    \t" + formatStats(nd.emptyRatio) + "\n";
+        return out;
+    }
+
+    print(formatNode("  ", stats.root));
+    print();
+
+    for (var d = 0; d <= stats.depth; ++d) {
+        print("  -- depth " + d + " --");
+        print(formatNode("    ", stats.perLevel[d]));
+    }
+
+    if (stats.expandedNodes) {
+        print("\n-- expanded nodes --\n");
+        for (var d = -1; d < stats.expandedNodes.length - 1; ++d) {
+            var node;
+            if (d == -1) {
+                node = stats.root;
+                print("  -- root -- ");
+            } else {
+                node = stats.expandedNodes[d][params.expandNodes[d + 1]];
+                print("  -- node # " + params.expandNodes[d + 1] + " at depth " + node.depth + " -- ");
+            }
+            print("    " + (node.firstKey ? tojsononeline(node.firstKey) : "") + " -> " +
+                  (node.lastKey ? tojsononeline(node.lastKey) : ""));
+            print("    " + node.childrenCount + " children (" + node.bucketUsedKeyCount + " used keys)" +
+                  "\tat diskloc " + tojsononeline(node.diskLoc));
+            print("    ");
+            print("    subtree stats, including node");
+            print(formatNode("      ", node));
+            var children = "     children -> ";
+            for (var k = 0; k < stats.expandedNodes[d + 1].length; ++k) {
+                children += stats.expandedNodes[d + 1][k].childNum + ": " +
+                            stats.expandedNodes[d + 1][k].childrenCount + " | ";
+                if (k != 0 && k % 10 == 0) children += "\n                 ";
+            }
+            print(children);
+            print(" ");
+        }
+    }
+}
+
 DBCollection.prototype.getShardVersion = function(){
     return this._db._adminCommand( { getShardVersion : this._fullName } );
 }
