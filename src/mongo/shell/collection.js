@@ -529,8 +529,13 @@ DBCollection.prototype.printIndexStats = function(params, detailed) {
             print("    children (: subtree % full)");
             var children = "      ";
             for (var k = 0; k < stats.expandedNodes[d + 1].length; ++k) {
-                children += stats.expandedNodes[d + 1][k].childNum + ": " +
-                            ((1 - stats.expandedNodes[d + 1][k].emptyRatio.mean) * 100).toFixed(1) + " | ";
+                var node = stats.expandedNodes[d + 1][k];
+                if (node.childNum != undefined) {
+                    children += node.childNum + ": " +
+                                ((1 - node.emptyRatio.mean) * 100).toFixed(1) + " | ";
+                } else {
+                    children += k + ": - | ";
+                }
                 if (k != 0 && k % 10 == 0) children += "\n      ";
             }
             print(children);
