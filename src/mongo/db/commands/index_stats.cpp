@@ -1,5 +1,5 @@
 /** @file storage_details.cpp
- * collection.storageDetails({...}) command
+ * collection.indexStats({...}) command
  */
 
 /*    Copyright 2012 10gen Inc.
@@ -72,7 +72,7 @@ namespace mongo {
         boost::optional<BSONObj> lastKey;
         boost::optional<BSONObj> diskLoc;
         boost::optional<unsigned int> childNum;
-        boost::optional<unsigned int> childrenCount;
+        boost::optional<unsigned int> bucketKeyCount;
         boost::optional<unsigned int> bucketUsedKeyCount;
         boost::optional<unsigned int> depth;
 
@@ -103,7 +103,7 @@ namespace mongo {
                     << "emptyBytes" << emptyBytes.toBSONObj()
                     << "emptyRatio" << emptyRatio.toBSONObj();
             if (childNum) builder << "childNum" << *childNum;
-            if (childrenCount) builder << "childrenCount" << *childrenCount;
+            if (bucketKeyCount) builder << "bucketKeyCount" << *bucketKeyCount;
             if (bucketUsedKeyCount) builder << "bucketUsedKeyCount" << *bucketUsedKeyCount;
             if (firstKey) builder << "firstKey" << *firstKey;
             if (lastKey) builder << "lastKey" << *lastKey;
@@ -275,7 +275,7 @@ namespace mongo {
             if (bucket->getN() > 1)
                 curNodeStats.lastKey = bucket->keyAt(bucket->getN() - 1).toBson();
             curNodeStats.diskLoc = dl.toBSONObj();
-            curNodeStats.childrenCount = childrenCount;
+            curNodeStats.bucketKeyCount = keyCount;
             curNodeStats.depth = depth;
             curNodeStats.childNum = childNum;
         }

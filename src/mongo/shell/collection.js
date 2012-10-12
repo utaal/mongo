@@ -435,7 +435,7 @@ DBCollection.prototype.indexStats = function(params) {
     return this._db.runCommand( cmd );
 }
 
-DBCollection.prototype.printIndexStats = function(params) {
+DBCollection.prototype.printIndexStats = function(params, detailed) {
     var stats = this.indexStats(params);
     if (!stats.ok) {
         print("error executing indexStats command: " + stats.errmsg);
@@ -445,11 +445,13 @@ DBCollection.prototype.printIndexStats = function(params) {
     print("  version " + stats.version + " | key pattern " +
           tojsononeline(stats.keyPattern) + (stats.isIdIndex ? " [id index]" : "") +
           " | storage namespace \"" + stats.storageNs + "\"");
-    print("  " + stats.depth + " deep");
+    print("  " + stats.depth + " deep, bucket body is " + stats.bucketBodyBytes + " bytes");
     print();
-    print("  **  min |-- .02 quant --- 1st quartile [=== median ===] 3rd quartile --- " +
-          ".98 quant --| max  **  ");
-    print();
+    if (detailed) {
+        print("  **  min |-- .02 quant --- 1st quartile [=== median ===] 3rd quartile --- " +
+              ".98 quant --| max  **  ");
+        print();
+    }
 
     var fnum = function(n) {
         return n.toFixed(3);
@@ -482,17 +484,19 @@ DBCollection.prototype.printIndexStats = function(params) {
                       + " (±" + fnum((nd.bsonRatio.stddev) * 100) + " %) bson keys, "
                       + fnum(nd.keyNodeRatio.mean * 100) + " %"
                       + " (±" + fnum((nd.keyNodeRatio.stddev) * 100) + " %) key nodes\n";
-        out += indent + "\n";
-        out += indent + "key count\t" + formatStats(nd.keyCount) + "\n";
-        out += indent + "used keys\t" + formatStats(nd.usedKeyCount) + "\n";
-        out += indent + "space occupied by (bytes)\n";
-        out += indent + "  key nodes\t" + formatStats(nd.keyNodeBytes) + "\n";
-        out += indent + "  key objs \t" + formatStats(nd.bsonBytes) + "\n";
-        out += indent + "  empty    \t" + formatStats(nd.emptyBytes) + "\n";
-        out += indent + "space occupied by (ratio of bucket)\n";
-        out += indent + "  key nodes\t" + formatStats(nd.keyNodeRatio) + "\n";
-        out += indent + "  key objs \t" + formatStats(nd.bsonRatio) + "\n";
-        out += indent + "  empty    \t" + formatStats(nd.emptyRatio) + "\n";
+        if (detailed) {
+            out += indent + "\n";
+            out += indent + "key count\t" + formatStats(nd.keyCount) + "\n";
+            out += indent + "used keys\t" + formatStats(nd.usedKeyCount) + "\n";
+            out += indent + "space occupied by (bytes)\n";
+            out += indent + "  key nodes\t" + formatStats(nd.keyNodeBytes) + "\n";
+            out += indent + "  key objs \t" + formatStats(nd.bsonBytes) + "\n";
+            out += indent + "  empty    \t" + formatStats(nd.emptyBytes) + "\n";
+            out += indent + "space occupied by (ratio of bucket)\n";
+            out += indent + "  key nodes\t" + formatStats(nd.keyNodeRatio) + "\n";
+            out += indent + "  key objs \t" + formatStats(nd.bsonRatio) + "\n";
+            out += indent + "  empty    \t" + formatStats(nd.emptyRatio) + "\n";
+        }
         return out;
     }
 
@@ -517,16 +521,17 @@ DBCollection.prototype.printIndexStats = function(params) {
             }
             print("    " + (node.firstKey ? tojsononeline(node.firstKey) : "") + " -> " +
                   (node.lastKey ? tojsononeline(node.lastKey) : ""));
-            print("    " + node.childrenCount + " children (" + node.bucketUsedKeyCount + " used keys)" +
+            print("    " + node.bucketKeyCount + " keys (" + node.bucketUsedKeyCount + " used)" +
                   "\tat diskloc " + tojsononeline(node.diskLoc));
             print("    ");
             print("    subtree stats, including node");
             print(formatNode("      ", node));
-            var children = "     children -> ";
+            print("    children (: subtree % full)");
+            var children = "      ";
             for (var k = 0; k < stats.expandedNodes[d + 1].length; ++k) {
                 children += stats.expandedNodes[d + 1][k].childNum + ": " +
-                            stats.expandedNodes[d + 1][k].childrenCount + " | ";
-                if (k != 0 && k % 10 == 0) children += "\n                 ";
+                            ((1 - stats.expandedNodes[d + 1][k].emptyRatio.mean) * 100).toFixed(1) + " | ";
+                if (k != 0 && k % 10 == 0) children += "\n      ";
             }
             print(children);
             print(" ");
