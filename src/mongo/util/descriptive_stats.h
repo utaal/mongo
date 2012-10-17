@@ -66,7 +66,6 @@ namespace _descriptive_stats {
 
         inline double icdf(double prob) const {
             int quant = int(prob * (NumQuantiles + 1));
-            PRINT(prob); PRINT(quant);
             return quantile(quant);
         }
 
