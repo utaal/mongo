@@ -44,7 +44,7 @@ namespace _descriptive_stats {
         DistributionEstimators& operator <<(const Sample sample);
 
         inline double quantile(std::size_t i) const {
-            if (i >= NumQuantiles) return NAN;
+            if (i > NumQuantiles + 1) return NAN;
             return this->_heights[2 * i];
         }
 
