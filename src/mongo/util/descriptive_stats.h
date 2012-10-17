@@ -19,19 +19,25 @@ namespace mongo {
 
 namespace _descriptive_stats {
 
+    #include <cmath>
+
     template <class Sample>
     class BasicEstimators {
     public:
+        BasicEstimators();
+
+        BasicEstimators& operator <<(const Sample sample);
+
         inline int count() const { return _count; }
         inline double mean() const { return _mean; }
-        inline double stddev() const { return _stddev; }
+        inline double stddev() const { return std::sqrt(_variance); }
         inline Sample min() const { return _min; }
         inline Sample max() const { return _max; }
 
     private:
         int _count;
         double _mean;
-        double _stddev;
+        double _variance;
         Sample _min;
         Sample _max;
     };

@@ -43,11 +43,35 @@
 
 #pragma once
 
-#include <algorithm>
-
 namespace mongo {
 
 namespace _descriptive_stats {
+
+    #include <algorithm>
+
+    template <class Sample>
+    BasicEstimators<Sample>::BasicEstimators() {
+    }
+
+    template <class Sample>
+    BasicEstimators<Sample>& BasicEstimators<Sample>::operator <<(const Sample sample) {
+        if (this->_count++ == 0) {
+            this->_min = sample;
+            this->_max = sample;
+            this->_mean = sample;
+            this->_variance = 0;
+            return *this;
+        }
+
+        this->_min = min(sample, this->_min);
+        this->_max = max(sample, this->_max);
+
+        // count already incremented
+        this->_mean = double(this->_mean * (this->_count - 1) + sample) / this->_count;
+        double tmp = sample - this->_mean;
+        this->_variance = double(this->_variance * (this->_count - 1))/ this->_count +
+                          double(tmp * tmp) / (this->_count - 1);
+    }
 
     template <class Sample, std::size_t NumQuantiles>
     DistributionEstimators<Sample, NumQuantiles>::DistributionEstimators() :
