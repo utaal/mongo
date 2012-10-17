@@ -17,7 +17,7 @@
 
 namespace mongo {
 
-namespace stats {
+namespace _descriptive_stats {
 
     template <class Sample>
     class BasicEstimators {
@@ -36,16 +36,19 @@ namespace stats {
         Sample _max;
     };
 
-    template <class Sample, unsigned int NumQuantiles>
+    template <class Sample, std::size_t NumQuantiles>
     class DistributionEstimators {
     public:
-        DistributionEstimators() :
-            _heights({}),
-            _actual_positions({}),
-            _desired_positions({}),
-            _positions_increments({});
+        DistributionEstimators();
+
+        DistributionEstimators& operator <<(const Sample sample);
+
+        inline double quantile(std::size_t i) const;
 
     private:
+        inline double _positions_increments(std::size_t i) const;
+
+        int _count;
         enum { NumMarkers = 2 * NumQuantiles + 3 };
         double _heights[NumMarkers];              // q_i
         double _actual_positions[NumMarkers];     // n_i
@@ -55,3 +58,10 @@ namespace stats {
 } // namespace _descriptive_stats
 
 } // namespace mongo
+
+#include "mongo/util/descriptive_stats.h"
+
+namespace mongo {
+    using _descriptive_stats::BasicEstimators;
+    using _descriptive_stats::DistributionEstimators;
+}
