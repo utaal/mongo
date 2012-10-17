@@ -37,7 +37,7 @@ namespace {
         // ASSERT_TRUE(areClose(t.skewness(), 0.138023, 1e-5));
         // ASSERT_TRUE(areClose(t.kurtosis(), -1.27932, 1e-5));
 
-        for (int i = 0; i < 100000; ++i) { d << double(std::rand()) / RAND_MAX; }
+        for (int i = 0; i < 100000; ++i) { d << double(i) / 100000; }
         for (size_t quant = 1; quant <= 99; ++quant) {
             ASSERT_TRUE(areClose(d.quantile(quant), double(quant) / 100, .05));
             double prob = double(quant) / 100;
