@@ -69,14 +69,17 @@ namespace _descriptive_stats {
         // count already incremented
         this->_mean = double(this->_mean * (this->_count - 1) + sample) / this->_count;
         double tmp = sample - this->_mean;
+        // iterative calculation of the variance
+        // (for the recurrence used refer to
+        //  http://www.boost.org/doc/libs/1_51_0/doc/html/boost/accumulators/impl/variance_impl.html)
         this->_variance = double(this->_variance * (this->_count - 1)) / this->_count +
                           double(tmp * tmp) / (this->_count - 1);
 
         return *this;
     }
 
-    template <class Sample, std::size_t NumQuantiles>
-    DistributionEstimators<Sample, NumQuantiles>::DistributionEstimators() :
+    template <std::size_t NumQuantiles>
+    DistributionEstimators<NumQuantiles>::DistributionEstimators() :
             _count(0) {
 
         for(std::size_t i = 0; i < NumMarkers; ++i)
@@ -91,9 +94,17 @@ namespace _descriptive_stats {
         }
     }
 
-    template <class Sample, std::size_t NumQuantiles>
-    DistributionEstimators<Sample, NumQuantiles>&
-    DistributionEstimators<Sample, NumQuantiles>::operator <<(const Sample sample) {
+    /*
+     * The quantile estimation follows the extended_p_square implementation in boost.accumulators.
+     * It differs by removing the ability to request arbitrary quantiles and computing exactly
+     * 'NumQuantiles' equidistant quantiles (plus minimum and maximum) instead.
+     * See http://www.boost.org/doc/libs/1_51_0/doc/html/boost/accumulators/impl/extended_p_square_impl.html ,
+     * R. Jain and I. Chlamtac, The P^2 algorithmus for dynamic calculation of quantiles and histograms without storing observations, Communications of the ACM, Volume 28 (October), Number 10, 1985, p. 1076-1085. and
+     * K. E. E. Raatikainen, Simultaneous estimation of several quantiles, Simulation, Volume 49, Number 4 (October), 1986, p. 159-164.
+     */
+    template <std::size_t NumQuantiles>
+    DistributionEstimators<NumQuantiles>&
+    DistributionEstimators<NumQuantiles>::operator <<(const double sample) {
 
         // first accumulate num_markers samples
         if (_count < NumMarkers) {
@@ -186,8 +197,8 @@ namespace _descriptive_stats {
         return *this;
     }
 
-    template <class Sample, std::size_t NumQuantiles>
-    inline double DistributionEstimators<Sample, NumQuantiles>::_positions_increments(std::size_t i) const {
+    template <std::size_t NumQuantiles>
+    inline double DistributionEstimators<NumQuantiles>::_positions_increments(std::size_t i) const {
         return double(i) / (2 * (NumQuantiles + 1));
     }
 

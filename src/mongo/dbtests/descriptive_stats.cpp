@@ -22,7 +22,7 @@ namespace {
     }
 
     TEST(descriptive_stats, TestDistributionEstimators) {
-        DistributionEstimators<double, 99> d;
+        DistributionEstimators<99> d;
 
         for (int i = 0; i < 100000; ++i) {
             d << double(i) / 100000;
@@ -44,8 +44,8 @@ namespace {
         for (int i = 50; i <= 100000 - 50; ++i) {
             d << unsigned(i);
         }
-        ASSERT_EQUALS(d.min(), 50);
-        ASSERT_EQUALS(d.max(), 100000 - 50);
+        ASSERT_EQUALS(d.min(), 50u);
+        ASSERT_EQUALS(d.max(), 100000u - 50u);
         ASSERT_TRUE(areClose(d.mean(), 100000 / 2, .01));
         ASSERT_TRUE(areClose(d.stddev(), 28838.93461, .0001));
     }
