@@ -50,8 +50,8 @@ namespace mongo {
 namespace _descriptive_stats {
 
     template <class Sample, std::size_t NumQuantiles>
-    DistributionEstimators::DistributionEstimators() :
-            _count(0), _heights({}) {
+    DistributionEstimators<Sample, NumQuantiles>::DistributionEstimators() :
+            _count(0) {
 
         for(std::size_t i = 0; i < NumMarkers; ++i)
         {
@@ -66,7 +66,8 @@ namespace _descriptive_stats {
     }
 
     template <class Sample, std::size_t NumQuantiles>
-    DistributionEstimators& operator <<(const Sample sample) {
+    DistributionEstimators<Sample, NumQuantiles>&
+    DistributionEstimators<Sample, NumQuantiles>::operator <<(const Sample sample) {
 
         // first accumulate num_markers samples
         if (_count < NumMarkers) {
@@ -92,7 +93,6 @@ namespace _descriptive_stats {
                 sample_cell = NumMarkers - 1;
             }
             else {
-                typedef typename array_type::iterator iterator;
                 double* it = std::upper_bound(this->_heights,
                                               this->_heights + NumMarkers,
                                               sample);
@@ -161,13 +161,7 @@ namespace _descriptive_stats {
     }
 
     template <class Sample, std::size_t NumQuantiles>
-    inline double DistributionEstimators::quantile(std::size_t i) const {
-        if (i >= NumQuantiles) return NAN;
-        return this->_heights[i * 2];
-    }
-
-    template <class Sample, std::size_t NumQuantiles>
-    inline double DistributionEstimators::_positions_increments(std::size_t i) const {
+    inline double DistributionEstimators<Sample, NumQuantiles>::_positions_increments(std::size_t i) const {
         return double(i) / (2 * (NumQuantiles + 1));
     }
 

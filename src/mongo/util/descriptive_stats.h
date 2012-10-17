@@ -43,7 +43,26 @@ namespace _descriptive_stats {
 
         DistributionEstimators& operator <<(const Sample sample);
 
-        inline double quantile(std::size_t i) const;
+        inline double quantile(std::size_t i) const {
+            if (i >= NumQuantiles) return NAN;
+            return this->_heights[2 * i];
+        }
+
+        inline double min() const {
+            return quantile(0);
+        }
+        inline double max() const {
+            return quantile(NumQuantiles + 1);
+        }
+        inline double median() const {
+            return icdf(.5);
+        }
+
+        inline double icdf(double prob) const {
+            int quant = int(prob * (NumQuantiles + 1));
+            PRINT(prob); PRINT(quant);
+            return quantile(quant);
+        }
 
     private:
         inline double _positions_increments(std::size_t i) const;
@@ -59,7 +78,7 @@ namespace _descriptive_stats {
 
 } // namespace mongo
 
-#include "mongo/util/descriptive_stats.h"
+#include "mongo/util/descriptive_stats-inl.h"
 
 namespace mongo {
     using _descriptive_stats::BasicEstimators;
