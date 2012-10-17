@@ -457,7 +457,7 @@ DBCollection.prototype.printIndexStats = function(params, detailed) {
         return n.toFixed(3);
     }
 
-    var formatStats = function(st) {
+    var formatBoxPlot = function(st) {
         var out = "";
         if (st.count == 0) return "no samples";
         out += "avg. " + fnum(st.mean);
@@ -465,7 +465,7 @@ DBCollection.prototype.printIndexStats = function(params, detailed) {
         out += " | stdev. " + fnum(st.stddev);
 
         var quant = function(st, prob) {
-            return st.quantiles["" + prob].toFixed(2);
+            return st.quantiles["" + prob].toFixed(3);
         }
         if (st.quantiles) {
             out += "\t" + fnum(st.min) + " |-- " + quant(st, 0.02) + " --- " + quant(st, 0.25) +
@@ -475,7 +475,7 @@ DBCollection.prototype.printIndexStats = function(params, detailed) {
         return out;
     }
 
-    var formatNode = function(indent, nd) {
+    var formatStats = function(indent, nd) {
         var out = "";
         out += indent + "bucket count\t" + nd.numBuckets
                       + "\ton average " + fnum((1 - nd.emptyRatio.mean) * 100) + " %"
@@ -486,60 +486,61 @@ DBCollection.prototype.printIndexStats = function(params, detailed) {
                       + " (±" + fnum((nd.keyNodeRatio.stddev) * 100) + " %) key nodes\n";
         if (detailed) {
             out += indent + "\n";
-            out += indent + "key count\t" + formatStats(nd.keyCount) + "\n";
-            out += indent + "used keys\t" + formatStats(nd.usedKeyCount) + "\n";
-            out += indent + "space occupied by (bytes)\n";
-            out += indent + "  key nodes\t" + formatStats(nd.keyNodeBytes) + "\n";
-            out += indent + "  key objs \t" + formatStats(nd.bsonBytes) + "\n";
-            out += indent + "  empty    \t" + formatStats(nd.emptyBytes) + "\n";
+            out += indent + "key count\t" + formatBoxPlot(nd.keyCount) + "\n";
+            out += indent + "used keys\t" + formatBoxPlot(nd.usedKeyCount) + "\n";
             out += indent + "space occupied by (ratio of bucket)\n";
-            out += indent + "  key nodes\t" + formatStats(nd.keyNodeRatio) + "\n";
-            out += indent + "  key objs \t" + formatStats(nd.bsonRatio) + "\n";
-            out += indent + "  empty    \t" + formatStats(nd.emptyRatio) + "\n";
+            out += indent + "  key nodes\t" + formatBoxPlot(nd.keyNodeRatio) + "\n";
+            out += indent + "  key objs \t" + formatBoxPlot(nd.bsonRatio) + "\n";
+            out += indent + "  empty    \t" + formatBoxPlot(nd.emptyRatio) + "\n";
         }
         return out;
     }
 
-    print(formatNode("  ", stats.root));
+    print(formatStats("  ", stats.overall));
     print();
 
     for (var d = 0; d <= stats.depth; ++d) {
         print("  -- depth " + d + " --");
-        print(formatNode("    ", stats.perLevel[d]));
+        print(formatStats("    ", stats.perLevel[d]));
     }
 
     if (stats.expandedNodes) {
         print("\n-- expanded nodes --\n");
-        for (var d = -1; d < stats.expandedNodes.length - 1; ++d) {
+        for (var d = 0; d < stats.expandedNodes.length - 1; ++d) {
             var node;
-            if (d == -1) {
-                node = stats.root;
+            if (d == 0) {
+                node = stats.expandedNodes[0][0];
                 print("  -- root -- ");
             } else {
-                node = stats.expandedNodes[d][params.expandNodes[d + 1]];
-                print("  -- node # " + params.expandNodes[d + 1] + " at depth " + node.depth + " -- ");
+                node = stats.expandedNodes[d][params.expandNodes[d]];
+                print("  -- node # " + params.expandNodes[d] + " at depth " +
+                      node.nodeInfo.depth + " -- ");
             }
-            print("    " + (node.firstKey ? tojsononeline(node.firstKey) : "") + " -> " +
-                  (node.lastKey ? tojsononeline(node.lastKey) : ""));
-            print("    " + node.bucketKeyCount + " keys (" + node.bucketUsedKeyCount + " used)" +
-                  "\tat diskloc " + tojsononeline(node.diskLoc));
+            print("    " + (node.nodeInfo.firstKey ? tojsononeline(node.nodeInfo.firstKey) : "") + " -> " +
+                  (node.nodeInfo.lastKey ? tojsononeline(node.nodeInfo.lastKey) : ""));
+            print("    " + node.nodeInfo.keyCount + " keys (" + node.nodeInfo.keyCount + " used)" +
+                  "\tat diskloc " + tojsononeline(node.nodeInfo.diskLoc));
             print("    ");
-            print("    subtree stats, including node");
-            print(formatNode("      ", node));
-            print("    children (: subtree % full)");
-            var children = "      ";
-            for (var k = 0; k < stats.expandedNodes[d + 1].length; ++k) {
-                var node = stats.expandedNodes[d + 1][k];
-                if (node.childNum != undefined) {
-                    children += node.childNum + ": " +
-                                ((1 - node.emptyRatio.mean) * 100).toFixed(1) + " | ";
-                } else {
-                    children += k + ": - | ";
+            print("    subtree stats, excluding node");
+            print(formatStats("      ", node));
+
+            if (detailed) {
+                print("    children (: % full, subtree % full)");
+                var children = "      ";
+                for (var k = 0; k < stats.expandedNodes[d + 1].length; ++k) {
+                    var node = stats.expandedNodes[d + 1][k];
+                    if (node.nodeInfo != undefined) {
+                        children += node.nodeInfo.childNum + ": " +
+                                    ((1 - node.nodeInfo.emptyRatio) * 100).toFixed(1) + ", " +
+                                    ((1 - node.emptyRatio.mean) * 100).toFixed(1) + " | ";
+                    } else {
+                        children += k + ": - | ";
+                    }
+                    if (k != 0 && k % 5 == 0) children += "\n      ";
                 }
-                if (k != 0 && k % 10 == 0) children += "\n      ";
+                print(children);
+                print(" ");
             }
-            print(children);
-            print(" ");
         }
     }
 }
