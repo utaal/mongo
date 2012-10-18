@@ -31,8 +31,10 @@
 #include "mongo/db/db.h"
 #include "mongo/db/index.h"
 #include "mongo/db/jsobj.h"
+#include "mongo/db/kill_current_op.h"
 #include "mongo/db/namespace_details.h"
-#include "mongo/util/desc_accumul.h"
+#include "mongo/util/descriptive_stats.h"
+#include "mongo/util/descriptive_stats_bson.h"
 
 namespace mongo {
 
@@ -79,14 +81,16 @@ namespace mongo {
     };
 
     struct AreaStats {
+        static const int QUANTILES = 99;
+
         boost::optional<NodeInfo> nodeInfo;
 
         unsigned int numBuckets;
-        DescAccumul<double> bsonRatio;
-        DescAccumul<double> emptyRatio;
-        DescAccumul<double> keyNodeRatio;
-        DescAccumul<unsigned int> keyCount;
-        DescAccumul<unsigned int> usedKeyCount;
+        SummaryEstimators<double, QUANTILES> bsonRatio;
+        SummaryEstimators<double, QUANTILES> emptyRatio;
+        SummaryEstimators<double, QUANTILES> keyNodeRatio;
+        SummaryEstimators<unsigned int, QUANTILES> keyCount;
+        SummaryEstimators<unsigned int, QUANTILES> usedKeyCount;
 
         AreaStats() : numBuckets(0) {
         }
@@ -98,11 +102,11 @@ namespace mongo {
         void addStats(int keyCount, int usedKeyCount, const BtreeBucket<Version>* bucket,
                       int keyNodeBytes) {
             this->numBuckets += 1;
-            this->bsonRatio += double(bucket->getBsonSize()) / bucket->bodySize();
-            this->keyNodeRatio += double(keyNodeBytes * keyCount) / bucket->bodySize();
-            this->emptyRatio += double(bucket->getEmptySize()) / bucket->bodySize();
-            this->keyCount += keyCount;
-            this->usedKeyCount += usedKeyCount;
+            this->bsonRatio << double(bucket->getBsonSize()) / bucket->bodySize();
+            this->keyNodeRatio << double(keyNodeBytes * keyCount) / bucket->bodySize();
+            this->emptyRatio << double(bucket->getEmptySize()) / bucket->bodySize();
+            this->keyCount << keyCount;
+            this->usedKeyCount << usedKeyCount;
         }
 
         void appendTo(BSONObjBuilder& builder, const BtreeStats* globalStats) const {
@@ -119,11 +123,11 @@ namespace mongo {
             }
 
             builder << "numBuckets" << numBuckets
-                    << "keyCount" << keyCount.toBSONObj()
-                    << "usedKeyCount" << usedKeyCount.toBSONObj()
-                    << "bsonRatio" << bsonRatio.toBSONObj()
-                    << "keyNodeRatio" << keyNodeRatio.toBSONObj()
-                    << "emptyRatio" << emptyRatio.toBSONObj();
+                    << "keyCount" << statisticSummaryToBSONObj(keyCount)
+                    << "usedKeyCount" << statisticSummaryToBSONObj(usedKeyCount)
+                    << "bsonRatio" << statisticSummaryToBSONObj(bsonRatio)
+                    << "keyNodeRatio" << statisticSummaryToBSONObj(keyNodeRatio)
+                    << "emptyRatio" << statisticSummaryToBSONObj(emptyRatio);
         }
     };
 
