@@ -27,6 +27,7 @@ namespace {
         for (int i = 0; i < 100000; ++i) {
             d << double(i) / 100000;
         }
+        ASSERT_TRUE(d.quantilesReady());
         for (size_t quant = 1; quant <= 99; ++quant) {
             ASSERT_EQUALS(d.probability(quant), double(quant) / 100);
             ASSERT_TRUE(areClose(d.quantile(quant), double(quant) / 100, .05));
@@ -57,13 +58,32 @@ namespace {
         for (int a = -200; a <= 200; ++a) {
             d << a;
         }
+        ASSERT_TRUE(d.quantilesReady());
         ASSERT_EQUALS(d.min(), -200);
         ASSERT_EQUALS(d.max(), 200);
         ASSERT_TRUE(areClose(d.mean(), 0, .001));
-        for (int q = 0; q <= 100; ++q) {
-            DEV log() << d.probability(q) << " " << d.quantile(q) << " " << d.icdf(double(q) / 100) << endl;
-        }
         ASSERT_TRUE(areClose(d.icdf(.25), -100, 1));
+    }
+
+    TEST(descriptive_stats, DensityFromDistributionEstimators) {
+        DistributionEstimators<49> d;
+
+        for (double a = -.7; a <= .3; a += .001) {
+            d << a;
+        }
+        ASSERT_TRUE(d.quantilesReady());
+
+        DensityFromDistributionEstimators density(d, 1000);
+
+        double cumulativeProbability = 0.;
+        for (vector<double>::const_iterator it = density.result().begin();
+             it != density.result().end();
+             ++it) {
+
+            ASSERT_TRUE(areClose(*it, 1. / 1000, 1. / 1000));
+            cumulativeProbability += *it;
+        }
+        ASSERT_TRUE(areClose(cumulativeProbability, 1., .00001));
     }
 
 }  // namespace

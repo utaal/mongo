@@ -112,8 +112,8 @@ namespace _descriptive_stats {
     DistributionEstimators<NumQuantiles>::operator <<(const double sample) {
 
         // first accumulate num_markers samples
-        if (_count < NumMarkers) {
-            this->_heights[_count++] = sample;
+        if (_count++ < NumMarkers) {
+            this->_heights[_count - 1] = sample;
 
             if (_count == NumMarkers)
             {
@@ -205,6 +205,58 @@ namespace _descriptive_stats {
     template <std::size_t NumQuantiles>
     inline double DistributionEstimators<NumQuantiles>::_positions_increments(std::size_t i) const {
         return double(i) / (2 * (NumQuantiles + 1));
+    }
+
+    template <std::size_t NumQuantiles>
+    DensityFromDistributionEstimators::DensityFromDistributionEstimators(
+            DistributionEstimators<NumQuantiles> e,
+            std::size_t numRanges) : _probability(numRanges) {
+
+        verify(e.quantilesReady());
+
+        _min = e.min();
+        _max = e.max();
+
+        // cache it inside the constructor
+        double rangeDelta_ = rangeDelta();
+
+        // cumulative probability poured in previous bins
+        double cumulativeProbability = 0.;
+
+        // current density bin
+        std::size_t curRange = 0;
+
+        // probability delta between a quantile and the next
+        double quantileProbabilityStep = 1. / (NumQuantiles + 1);
+
+        for (std::size_t quant = 1; quant <= NumQuantiles + 1; ++quant) {
+
+            // value delta between the current and previous quantile
+            double delta = e.quantile(quant) - e.quantile(quant - 1);
+
+            for (; (curRange + 1) * rangeDelta_ + _min < e.quantile(quant); ++curRange) {
+
+                // all bins already filled
+                if (curRange >= _probability.size()) break;
+
+                // probability corresponding to the end of the current bin on a piecewise-linear
+                // approximation of the cumulative distribution function
+                double probability =
+                        quantileProbabilityStep / delta *
+                            ( (curRange + 1) * rangeDelta_ + _min - e.quantile(quant - 1) )
+                        + e.probability(quant - 1);
+
+                _probability[curRange] = probability - cumulativeProbability;
+                cumulativeProbability = probability;
+            }
+        }
+
+        // fill in the last bin if needed
+        if (curRange == numRanges - 1) {
+            _probability[curRange++] = 1. - cumulativeProbability;
+        }
+
+        verify(curRange == numRanges);
     }
 
 } // namespace _descriptive_stats

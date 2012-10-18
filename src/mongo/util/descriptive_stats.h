@@ -118,6 +118,13 @@ namespace _descriptive_stats {
         }
 
         /**
+         * @return true when enough value has been observed to output sensible quantiles
+         */
+        inline bool quantilesReady() const {
+            return _count >= NumMarkers;
+        }
+
+        /**
          * @return estimated minimum
          *
          * NOTE: use SimpleEstimators::min for an exact value.
@@ -193,6 +200,52 @@ namespace _descriptive_stats {
         }
     };
 
+    /**
+     * Computes an approximate density function (with numRanges discrete ranges) by inverting
+     * and taking the derivative of the inverse cumulative distribution function provided by
+     * the DistributionEstimators. A linear interpolation is used between the data points provided
+     * by the quantiles.
+     * The i-th result bin should be interpreted as the approximate density of the values in the
+     * range [min() + i * rangeDelta(), min() + (i + 1) * rangeDelta()]. There will be 'numRange'
+     * values in the result vector.
+     */
+    class DensityFromDistributionEstimators {
+    public:
+        /**
+         * REQUIRES: estimators.quantilesReady()
+         */
+        template <std::size_t NumQuantiles>
+        DensityFromDistributionEstimators(
+                DistributionEstimators<NumQuantiles> estimators,
+                std::size_t numRanges);
+
+        /**
+         * @return width (on the x axis) of a single density bin
+         */
+        inline double rangeDelta() const { return (_max - _min) / _probability.size(); }
+
+        /**
+         * @return minimum value observed
+         */
+        inline double min() const { return _min; }
+
+        /**
+         * @return maximum value observed
+         */
+        inline double max() const { return _max; }
+
+        /**
+         * @return vector containing 'numRange' density bins referring to equal-width ranges within
+         *         min() and max()
+         */
+        inline const vector<double>& result() { return _probability; }
+
+    private:
+        vector<double> _probability;
+        double _min;
+        double _max;
+    };
+
 } // namespace _descriptive_stats
 
 } // namespace mongo
@@ -203,4 +256,5 @@ namespace mongo {
     using _descriptive_stats::BasicEstimators;
     using _descriptive_stats::DistributionEstimators;
     using _descriptive_stats::SummaryEstimators;
+    using _descriptive_stats::DensityFromDistributionEstimators;
 }
