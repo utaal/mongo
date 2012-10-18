@@ -104,6 +104,12 @@ namespace mongo {
 
         static bool blockInMemory( char * start );
 
+        /**
+         * Sets i-th element of out to true if the (i+1)-th page starting from start is in memory.
+         * @return true on success, false otherwise
+         */
+        static bool pagesInMemory(char* start, size_t numPages, vector<bool>& out);
+
     private:
         /**
          * Host and operating system info.  Does not change over time.
