@@ -223,8 +223,9 @@ namespace mongo {
         return false;
     }
 
-    bool pagesInMemory(char* start, size_t numPages, vector<bool>& out) {
+    bool ProcessInfo::pagesInMemory(char* start, size_t numPages, vector<bool>& out) {
         SYSTEM_INFO ntsysinfo;  //system stats
+        GetNativeSystemInfo( &ntsysinfo );
 
         size_t pageSize = static_cast<size_t>(ntsysinfo.dwPageSize);
 
