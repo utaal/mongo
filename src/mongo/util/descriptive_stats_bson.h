@@ -26,7 +26,7 @@ namespace mongo {
             const BasicEstimators<Sample>& e,
             BSONObjBuilder& b) {
 
-        b << "samples" << e.count()
+        b << "count" << e.count()
           << "mean" << e.mean()
           << "stddev" << e.stddev()
           << "min" << e.min()
@@ -49,15 +49,17 @@ namespace mongo {
     }
 
     template <class Sample, std::size_t NumQuantiles>
-    void appendSummaryEstimatorsToBSONObjBuilder(
-            const SummaryEstimators<Sample, NumQuantiles>& e,
-            BSONObjBuilder& b) {
-
+    inline BSONObj statisticSummaryToBSONObj(const SummaryEstimators<Sample, NumQuantiles>& e) {
+        BSONObjBuilder b;
         appendBasicEstimatorsToBSONObjBuilder(e, b);
         if (e.quantilesReady()) {
-            BSONArrayBuilder arr(b.subarrayStart("quantiles"));
-            appendQuantilesToBSONArrayBuilder(e, arr);
+            BSONObjBuilder quantilesBuilder(b.subobjStart("quantiles"));
+            double quantiles[] = {.01, .02, .09, .25, .5, .75, .91, .98, .99};
+            for (int i = 0; i < 9; ++i) {
+                quantilesBuilder << std::string(str::stream() << quantiles[i]) << e.icdf(quantiles[i]);
+            }
         }
+        return b.obj();
     }
 
 }
