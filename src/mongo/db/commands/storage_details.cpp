@@ -526,21 +526,22 @@ namespace {
                 chunkLength = params.lastChunkLength;
             }
             int pagesInChunk = ceilingDiv(chunkLength, PAGE_SIZE);
-            //TODO: remove
-            DEV dlog(LL_DEBUG) << "pages in chunk # " << chunk << ": " << pagesInChunk << endl;
+
+            char* firstPageAddr = startAddr + (chunk * params.granularity);
+            vector<bool> isInMem(pagesInChunk);
+            if (! ProcessInfo::pagesInMemory(firstPageAddr, pagesInChunk, isInMem)) {
+                errmsg = "system call failed";
+                return false;
+            }
+
             int inMemCount = 0;
             for (int page = 0; page < pagesInChunk; ++page) {
-                char* curPageAddr = startAddr + (chunk * params.granularity) +
-                                    (page * PAGE_SIZE);
-                //TODO: remove
-                DEV if (page == 0) {
-                    DEV tlog() << (void*) curPageAddr << endl;
-                }
-                if (ProcessInfo::blockInMemory(curPageAddr)) {
+                if (isInMem[page]) {
                     inMemCount++;
                     extentInMemCount++;
                 }
             }
+
             arr.append(double(inMemCount) / pagesInChunk);
         }
         arr.done();
