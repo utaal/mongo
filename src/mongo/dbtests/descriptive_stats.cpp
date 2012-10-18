@@ -28,6 +28,7 @@ namespace {
             d << double(i) / 100000;
         }
         for (size_t quant = 1; quant <= 99; ++quant) {
+            ASSERT_EQUALS(d.probability(quant), double(quant) / 100);
             ASSERT_TRUE(areClose(d.quantile(quant), double(quant) / 100, .05));
             double prob = double(quant) / 100;
             ASSERT_TRUE(areClose(d.icdf(prob), prob, .05));
@@ -48,6 +49,21 @@ namespace {
         ASSERT_EQUALS(d.max(), 100000u - 50u);
         ASSERT_TRUE(areClose(d.mean(), 100000 / 2, .01));
         ASSERT_TRUE(areClose(d.stddev(), 28838.93461, .0001));
+    }
+
+    TEST(descriptive_stats, SummaryEstimators) {
+        SummaryEstimators<int, 99> d;
+
+        for (int a = -200; a <= 200; ++a) {
+            d << a;
+        }
+        ASSERT_EQUALS(d.min(), -200);
+        ASSERT_EQUALS(d.max(), 200);
+        ASSERT_TRUE(areClose(d.mean(), 0, .001));
+        for (int q = 0; q <= 100; ++q) {
+            DEV log() << d.probability(q) << " " << d.quantile(q) << " " << d.icdf(double(q) / 100) << endl;
+        }
+        ASSERT_TRUE(areClose(d.icdf(.25), -100, 1));
     }
 
 }  // namespace

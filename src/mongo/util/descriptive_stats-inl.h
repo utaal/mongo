@@ -45,6 +45,7 @@
 
 namespace mongo {
 
+// avoid namespace pollution
 namespace _descriptive_stats {
 
     #include <algorithm>
@@ -55,6 +56,7 @@ namespace _descriptive_stats {
 
     template <class Sample>
     BasicEstimators<Sample>& BasicEstimators<Sample>::operator <<(const Sample sample) {
+
         if (this->_count++ == 0) {
             this->_min = sample;
             this->_max = sample;
@@ -67,8 +69,11 @@ namespace _descriptive_stats {
         this->_max = std::max(sample, this->_max);
 
         // count already incremented
+
+        // iterative calculation of the mean
         this->_mean = double(this->_mean * (this->_count - 1) + sample) / this->_count;
         double tmp = sample - this->_mean;
+
         // iterative calculation of the variance
         // (for the recurrence used refer to
         //  http://www.boost.org/doc/libs/1_51_0/doc/html/boost/accumulators/impl/variance_impl.html)

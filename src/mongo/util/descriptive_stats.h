@@ -32,6 +32,7 @@ namespace mongo {
  * It differs by being tailored for typical descriptive statistics use cases
  * thus providing a simpler (even though less flexible) interface.
  */
+// don't use this namespace directly, use the name imported in mongo::
 namespace _descriptive_stats {
 
     #include <cmath>
@@ -142,6 +143,13 @@ namespace _descriptive_stats {
         }
 
         /**
+         * @return probability associated with the i-th quantile
+         */
+        inline double probability(std::size_t i) const {
+            return i * 1. / (NumQuantiles + 1);
+        }
+
+        /**
          * @return value for the nearest quantile with probability < 'prob'
          */
         inline double icdf(double prob) const {
@@ -159,6 +167,32 @@ namespace _descriptive_stats {
         double _desired_positions[NumMarkers];    // d_i
     };
 
+    /**
+     * Provides the funcionality of both BasicEstimators and DistributionEstimators.
+     */
+    template <class Sample, std::size_t NumQuantiles>
+    class SummaryEstimators :
+            // Multiple-inheritance
+            public BasicEstimators<Sample>,
+            public DistributionEstimators<NumQuantiles> {
+    public:
+        // Dispatch samples to the inherited estimators
+        inline SummaryEstimators& operator<<(const Sample sample) {
+            this->BasicEstimators<Sample>::operator<<(sample);
+            this->DistributionEstimators<NumQuantiles>::operator<<(sample);
+            return *this;
+        }
+
+        // Expose the exact values
+        inline Sample min() const {
+            return this->BasicEstimators<Sample>::min();
+        }
+
+        inline Sample max() const {
+            return this->BasicEstimators<Sample>::max();
+        }
+    };
+
 } // namespace _descriptive_stats
 
 } // namespace mongo
@@ -168,4 +202,5 @@ namespace _descriptive_stats {
 namespace mongo {
     using _descriptive_stats::BasicEstimators;
     using _descriptive_stats::DistributionEstimators;
+    using _descriptive_stats::SummaryEstimators;
 }
