@@ -23,34 +23,37 @@ _ coalesce deleted
 _ disallow system* manipulations from the database.
 */
 
-#include "pch.h"
-#include "pdfile.h"
-#include "mongo/db/pdfile_private.h"
-#include "db.h"
-#include "../util/mmap.h"
-#include "../util/hashtab.h"
-#include "../util/file_allocator.h"
-#include "../util/processinfo.h"
-#include "../util/file.h"
-#include "btree.h"
-#include "btreebuilder.h"
-#include <algorithm>
-#include <list>
-#include "repl.h"
-#include "dbhelpers.h"
-#include "namespace-inl.h"
-#include "extsort.h"
-#include "curop-inl.h"
-#include "background.h"
-#include "compact.h"
-#include "ops/delete.h"
-#include "instance.h"
-#include "replutil.h"
-#include "memconcept.h"
-#include "mongo/db/lasterror.h"
-#include "mongo/db/index_update.h"
+#include "mongo/pch.h"
 
+#include "mongo/db/pdfile.h"
+
+#include <algorithm>
 #include <boost/filesystem/operations.hpp>
+#include <list>
+
+#include "mongo/db/pdfile_private.h"
+#include "mongo/db/background.h"
+#include "mongo/db/btree.h"
+#include "mongo/db/btreebuilder.h"
+#include "mongo/db/compact.h"
+#include "mongo/db/curop-inl.h"
+#include "mongo/db/db.h"
+#include "mongo/db/dbhelpers.h"
+#include "mongo/db/extsort.h"
+#include "mongo/db/index_update.h"
+#include "mongo/db/instance.h"
+#include "mongo/db/kill_current_op.h"
+#include "mongo/db/lasterror.h"
+#include "mongo/db/memconcept.h"
+#include "mongo/db/namespace-inl.h"
+#include "mongo/db/ops/delete.h"
+#include "mongo/db/repl.h"
+#include "mongo/db/replutil.h"
+#include "mongo/util/file.h"
+#include "mongo/util/file_allocator.h"
+#include "mongo/util/hashtab.h"
+#include "mongo/util/mmap.h"
+#include "mongo/util/processinfo.h"
 
 namespace mongo {
 
@@ -659,8 +662,14 @@ namespace mongo {
     }
 
     DiskLoc Extent::_reuse(const char *nsname, bool capped) {
-        LOG(3) << "reset extent was:" << nsDiagnostic.toString() << " now:" << nsname << '\n';
-        massert( 10360 ,  "Extent::reset bad magic value", magic == 0x41424344 );
+        LOG(3) << "_reuse extent was:" << nsDiagnostic.toString() << " now:" << nsname << endl;
+        if (magic != extentSignature) {
+            StringBuilder sb;
+            sb << "bad extent signature " << toHex(&magic, 4)
+               << " for namespace '" << nsDiagnostic.toString()
+               << "' found in Extent::_reuse";
+            msgasserted(10360, sb.str());
+        }
         nsDiagnostic = nsname;
         markEmpty();
 
@@ -680,7 +689,7 @@ namespace mongo {
 
     /* assumes already zeroed -- insufficient for block 'reuse' perhaps */
     DiskLoc Extent::init(const char *nsname, int _length, int _fileNo, int _offset, bool capped) {
-        magic = 0x41424344;
+        magic = extentSignature;
         myLoc.set(_fileNo, _offset);
         xnext.Null();
         xprev.Null();
@@ -699,6 +708,56 @@ namespace mongo {
 
         return emptyLoc;
     }
+
+        bool Extent::validates(const DiskLoc diskLoc, BSONArrayBuilder* errors) {
+            bool extentOk = true;
+            if (magic != extentSignature) {
+                if (errors) {
+                    StringBuilder sb;
+                    sb << "bad extent signature " << toHex(&magic, 4)
+                       << " in extent " << diskLoc.toString();
+                    *errors << sb.str();
+                }
+                extentOk = false;
+            }
+            if (myLoc != diskLoc) {
+                if (errors) {
+                    StringBuilder sb;
+                    sb << "extent " << diskLoc.toString()
+                       << " self-pointer is " << myLoc.toString();
+                    *errors << sb.str();
+                }
+                extentOk = false;
+            }
+            if (firstRecord.isNull() != lastRecord.isNull()) {
+                if (errors) {
+                    StringBuilder sb;
+                    if (firstRecord.isNull()) {
+                        sb << "in extent " << diskLoc.toString()
+                           << ", firstRecord is null but lastRecord is "
+                           << lastRecord.toString();
+                    }
+                    else {
+                        sb << "in extent " << diskLoc.toString()
+                           << ", firstRecord is " << firstRecord.toString()
+                           << " but lastRecord is null";
+                    }
+                    *errors << sb.str();
+                }
+                extentOk = false;
+            }
+            if (length < minSize()) {
+                if (errors) {
+                    StringBuilder sb;
+                    sb << "length of extent " << diskLoc.toString()
+                       << " is " << length
+                       << ", which is less than minimum length of " << minSize();
+                    *errors << sb.str();
+                }
+                extentOk = false;
+            }
+            return extentOk;
+        }
 
     /*
       Record* Extent::newRecord(int len) {
@@ -945,7 +1004,7 @@ namespace mongo {
         result.append("ns", name.c_str());
         ClientCursor::invalidate(name.c_str());
         Top::global.collectionDropped( name );
-        NamespaceDetailsTransient::eraseForPrefix( name.c_str() );
+        NamespaceDetailsTransient::eraseCollection( name );
         dropNS(name);
     }
 
@@ -1006,9 +1065,12 @@ namespace mongo {
     }
 
     void DataFileMgr::deleteRecord(const char *ns, Record *todelete, const DiskLoc& dl, bool cappedOK, bool noWarn, bool doLog ) {
+        deleteRecord( nsdetails(ns), ns, todelete, dl, cappedOK, noWarn, doLog );
+    }
+
+    void DataFileMgr::deleteRecord(NamespaceDetails* d, const char *ns, Record *todelete, const DiskLoc& dl, bool cappedOK, bool noWarn, bool doLog ) {
         dassert( todelete == dl.rec() );
 
-        NamespaceDetails* d = nsdetails(ns);
         if ( d->isCapped() && !cappedOK ) {
             out() << "failing remove on a capped ns " << ns << endl;
             uassert( 10089 ,  "can't remove from a capped collection" , 0 );
@@ -1450,7 +1512,8 @@ namespace mongo {
         }
 
         int lenWHdr = d->getRecordAllocationSize( len + Record::HeaderSize );
-
+        fassert( 16440, lenWHdr >= ( len + Record::HeaderSize ) );
+        
         // If the collection is capped, check if the new object will violate a unique index
         // constraint before allocating space.
         if (d->nIndexes && 
@@ -1679,7 +1742,7 @@ namespace mongo {
             virtual bool apply( const Path &p ) {
                 if ( !boost::filesystem::exists( p ) )
                     return false;
-                boostRenameWrapper( p, newPath_ / ( p.leaf() + ".bak" ) );
+                boostRenameWrapper( p, newPath_ / ( p.leaf().string() + ".bak" ) );
                 return true;
             }
             virtual const char * op() const {
@@ -1787,7 +1850,7 @@ namespace mongo {
             uniqueReservedPath( ( preserveClonedFilesOnFailure || backupOriginalFiles ) ?
                                 "backup" : "_tmp" );
         MONGO_ASSERT_ON_EXCEPTION( boost::filesystem::create_directory( reservedPath ) );
-        string reservedPathString = reservedPath.native_directory_string();
+        string reservedPathString = reservedPath.string();
 
         bool res;
         {

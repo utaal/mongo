@@ -1,6 +1,7 @@
 // dbcommands.cpp
 
 /**
+*    Copyright (C) 2012 10gen Inc.
 *
 *    This program is free software: you can redistribute it and/or  modify
 *    it under the terms of the GNU Affero General Public License, version 3,
@@ -17,40 +18,43 @@
 
 /* SHARDING: 
    I believe this file is for mongod only.
-   See s/commnands_public.cpp for mongos.
+   See s/commands_public.cpp for mongos.
 */
 
-#include "pch.h"
-#include "ops/count.h"
-#include "pdfile.h"
-#include "jsobj.h"
-#include "../bson/util/builder.h"
+#include "mongo/pch.h"
+
 #include <time.h>
-#include "introspect.h"
-#include "btree.h"
-#include "../util/lruishmap.h"
-#include "../util/md5.hpp"
-#include "../util/processinfo.h"
-#include "../util/ramlog.h"
-#include "json.h"
-#include "repl.h"
-#include "repl_block.h"
-#include "replutil.h"
-#include "commands.h"
-#include "db.h"
-#include "instance.h"
-#include "lasterror.h"
-#include "security.h"
-#include "queryoptimizer.h"
-#include "../scripting/engine.h"
-#include "stats/counters.h"
-#include "background.h"
-#include "../util/version.h"
-#include "../s/d_writeback.h"
-#include "dur_stats.h"
-#include "../server.h"
+
+#include "mongo/bson/util/builder.h"
+#include "mongo/db/background.h"
+#include "mongo/db/btree.h"
+#include "mongo/db/commands.h"
+#include "mongo/db/db.h"
+#include "mongo/db/dur_stats.h"
 #include "mongo/db/index_update.h"
+#include "mongo/db/instance.h"
+#include "mongo/db/introspect.h"
+#include "mongo/db/jsobj.h"
+#include "mongo/db/json.h"
+#include "mongo/db/kill_current_op.h"
+#include "mongo/db/lasterror.h"
+#include "mongo/db/ops/count.h"
+#include "mongo/db/pdfile.h"
+#include "mongo/db/queryoptimizer.h"
+#include "mongo/db/repl.h"
 #include "mongo/db/repl/bgsync.h"
+#include "mongo/db/repl_block.h"
+#include "mongo/db/replutil.h"
+#include "mongo/db/security.h"
+#include "mongo/db/stats/counters.h"
+#include "mongo/s/d_writeback.h"
+#include "mongo/scripting/engine.h"
+#include "mongo/server.h"
+#include "mongo/util/lruishmap.h"
+#include "mongo/util/md5.hpp"
+#include "mongo/util/processinfo.h"
+#include "mongo/util/ramlog.h"
+#include "mongo/util/version.h"
 
 namespace mongo {
 
@@ -490,6 +494,7 @@ namespace mongo {
         }
 
         bool run(const string& dbname, BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool fromRepl) {
+
             long long start = Listener::getElapsedTimeMillis();
             BSONObjBuilder timeBuilder(128);
 
@@ -677,6 +682,12 @@ namespace mongo {
 
             timeBuilder.appendNumber( "after dur" , Listener::getElapsedTimeMillis() - start );
 
+            if ( cmdObj["workingSet"].trueValue() ) {
+                BSONObjBuilder bb( result.subobjStart( "workingSet" ) );
+                Record::appendWorkingSetInfo( bb );
+                bb.done();
+            }
+
             {
                 RamLog* rl = RamLog::get( "warnings" );
                 massert(15880, "no ram log for warnings?" , rl);
@@ -691,6 +702,8 @@ namespace mongo {
                     arr.done();
                 }
             }
+
+            // ----- cleaning up stuff
 
             if ( ! authed )
                 result.append( "note" , "run against admin for more info" );
@@ -1451,7 +1464,7 @@ namespace mongo {
                     }
                 }
                 else {
-                    errmsg = str::stream() << "unknown command: " << e.fieldName();
+                    errmsg = str::stream() << "unknown option to collMod: " << e.fieldName();
                     ok = false;
                 }
             }

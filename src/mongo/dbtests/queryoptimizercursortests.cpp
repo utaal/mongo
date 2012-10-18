@@ -637,7 +637,6 @@ namespace QueryOptimizerCursorTests {
             // _id 10 {_id:1}
             ASSERT_EQUALS( 10, c->current().getIntField( "_id" ) );
             ASSERT( !c->matcher()->matchesCurrent( c.get() ) );
-            ASSERT( !c->matcherPtr()->matchesCurrent( c.get() ) );
             ASSERT( c->advance() );
             
             // _id 0 {a:1}
@@ -653,7 +652,6 @@ namespace QueryOptimizerCursorTests {
             // _id 11 {_id:1}
             ASSERT_EQUALS( BSON( "_id" << 11 << "a" << 12 ), c->current() );
             ASSERT( c->matcher()->matchesCurrent( c.get() ) );
-            ASSERT( c->matcherPtr()->matchesCurrent( c.get() ) );
             ASSERT( !c->getsetdup( c->currLoc() ) );
             ASSERT( c->advance() );
             
@@ -1767,7 +1765,7 @@ namespace QueryOptimizerCursorTests {
             }
         };
         
-        /** Yield with BacicCursor takeover cursor. */
+        /** Yield with BasicCursor takeover cursor. */
         class TakeoverBasic : public Base {
         public:
             void run() {
@@ -3982,7 +3980,7 @@ namespace QueryOptimizerCursorTests {
             static void checkInvalidQueryAssertions() {
                 Client::ReadContext ctx( ns() );
                 
-                // An invalid query generaing a single query plan asserts.
+                // An invalid query generating a single query plan asserts.
                 BSONObj invalidQuery = fromjson( "{$and:[{$atomic:true}]}" );
                 assertInvalidQueryAssertion( invalidQuery );
                 
@@ -4632,7 +4630,7 @@ namespace QueryOptimizerCursorTests {
         /** nYields reporting of a QueryOptimizerCursor before it enters takeover mode. */
         class NYieldsAdvanceBasic : public NYieldsAdvanceBase {
             virtual int aValueToDelete() const {
-                // Before the MutiCursor takes over at 101 matches.
+                // Before the MultiCursor takes over at 101 matches.
                 return 50;
             }
         };

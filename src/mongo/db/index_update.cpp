@@ -25,6 +25,7 @@
 #include "mongo/db/compact.h"
 #include "mongo/db/extsort.h"
 #include "mongo/db/index.h"
+#include "mongo/db/kill_current_op.h"
 #include "mongo/db/namespace_details.h"
 #include "mongo/db/pdfile_private.h"
 #include "mongo/db/replutil.h"
@@ -336,7 +337,7 @@ namespace mongo {
             log() << "\t fastBuildIndex dupsToDrop:" << dupsToDrop.size() << endl;
 
         for( set<DiskLoc>::iterator i = dupsToDrop.begin(); i != dupsToDrop.end(); i++ ){
-            theDataFileMgr.deleteRecord( ns, i->rec(), *i, false /* cappedOk */ , true /* noWarn */ , isMaster( ns ) /* logOp */ );
+            theDataFileMgr.deleteRecord( d, ns, i->rec(), *i, false /* cappedOk */ , true /* noWarn */ , isMaster( ns ) /* logOp */ );
             getDur().commitIfNeeded();
         }
 
@@ -383,7 +384,7 @@ namespace mongo {
                         bool ok = cc->advance();
                         ClientCursor::YieldData yieldData;
                         massert( 16093, "after yield cursor deleted" , cc->prepareToYield( yieldData ) );
-                        theDataFileMgr.deleteRecord( ns, toDelete.rec(), toDelete, false, true , true );
+                        theDataFileMgr.deleteRecord( d, ns, toDelete.rec(), toDelete, false, true , true );
                         if( !cc->recoverFromYield( yieldData ) ) {
                             cc.release();
                             if( !ok ) {

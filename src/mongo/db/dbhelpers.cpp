@@ -249,8 +249,9 @@ namespace mongo {
         }
         while( pat.more() ){
             BSONElement patElt = pat.next();
-            verify( patElt.isNumber() );
-            if( minOrMax * patElt.numberInt() == 1){
+            // for non 1/-1 field values, like {a : "hashed"}, treat order as ascending
+            int order = patElt.isNumber() ? patElt.numberInt() : 1;
+            if( minOrMax * order == 1 ){
                 newBound.appendMaxKey("");
             }
             else {
@@ -268,7 +269,12 @@ namespace mongo {
                                     bool secondaryThrottle ,
                                     RemoveCallback * callback,
                                     bool fromMigrate ) {
-        
+
+        Timer rangeRemoveTimer;
+
+        LOG(1) << "begin removal of " << min << " to " << max << " in " << ns
+               << (secondaryThrottle ? " (waiting for secondaries)" : "" ) << endl;
+
         Client& c = cc();
 
         long long numDeleted = 0;
@@ -328,7 +334,7 @@ namespace mongo {
 
             Timer secondaryThrottleTime;
 
-            if ( secondaryThrottle ) {
+            if ( secondaryThrottle && numDeleted > 0 ) {
                 if ( ! waitForReplication( c.getLastOp(), 2, 60 /* seconds to wait */ ) ) {
                     warning() << "replication to secondaries for removeRange at least 60 seconds behind" << endl;
                 }
@@ -349,6 +355,9 @@ namespace mongo {
             log() << "Helpers::removeRangeUnlocked time spent waiting for replication: "  
                   << millisWaitingForReplication << "ms" << endl;
         
+        LOG(1) << "end removal of " << min << " to " << max << " in " << ns
+               << " (took " << rangeRemoveTimer.millis() << "ms)" << endl;
+
         return numDeleted;
     }
 

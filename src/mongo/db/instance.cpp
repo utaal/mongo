@@ -16,42 +16,43 @@
 *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "pch.h"
+#include "mongo/pch.h"
 
 #include <boost/thread/thread.hpp>
-
-#include "../util/time_support.h"
-#include "db.h"
-#include "../bson/util/atomic_int.h"
-#include "introspect.h"
-#include "repl.h"
-#include "dbmessage.h"
-#include "instance.h"
-#include "lasterror.h"
-#include "security.h"
-#include "json.h"
-#include "replutil.h"
-#include "../s/d_logic.h"
-#include "../util/file_allocator.h"
-#include "../util/goodies.h"
-#include "cmdline.h"
+#include <fstream>
+#include <boost/filesystem/operations.hpp>
 #if !defined(_WIN32)
 #include <sys/file.h>
 #endif
-#include "stats/counters.h"
-#include "background.h"
-#include "dur_journal.h"
-#include "dur_recover.h"
-#include "d_concurrency.h"
-#include "ops/count.h"
-#include "ops/delete.h"
-#include "ops/query.h"
-#include "ops/update.h"
-#include "pagefault.h"
-#include <fstream>
-#include <boost/filesystem/operations.hpp>
-#include "dur_commitjob.h"
+
+#include "mongo/util/time_support.h"
+#include "mongo/bson/util/atomic_int.h"
+#include "mongo/db/background.h"
+#include "mongo/db/cmdline.h"
 #include "mongo/db/commands/fsync.h"
+#include "mongo/db/d_concurrency.h"
+#include "mongo/db/db.h"
+#include "mongo/db/dbmessage.h"
+#include "mongo/db/dur_commitjob.h"
+#include "mongo/db/dur_journal.h"
+#include "mongo/db/dur_recover.h"
+#include "mongo/db/instance.h"
+#include "mongo/db/introspect.h"
+#include "mongo/db/json.h"
+#include "mongo/db/kill_current_op.h"
+#include "mongo/db/lasterror.h"
+#include "mongo/db/ops/count.h"
+#include "mongo/db/ops/delete.h"
+#include "mongo/db/ops/query.h"
+#include "mongo/db/ops/update.h"
+#include "mongo/db/pagefault.h"
+#include "mongo/db/repl.h"
+#include "mongo/db/replutil.h"
+#include "mongo/db/security.h"
+#include "mongo/db/stats/counters.h"
+#include "mongo/s/d_logic.h"
+#include "mongo/util/file_allocator.h"
+#include "mongo/util/goodies.h"
 
 namespace mongo {
     
@@ -476,13 +477,21 @@ namespace mongo {
                 mongo::log(1) << "note: not profiling because doing fsync+lock" << endl;
             }
             else {
-                Lock::DBWrite lk( currentOp.getNS() );
-                if ( dbHolder()._isLoaded( nsToDatabase( currentOp.getNS() ) , dbpath ) ) {
-                    Client::Context cx( currentOp.getNS(), dbpath, false );
-                    profile(c , currentOp );
+                try {
+                    Lock::DBWrite lk( currentOp.getNS() );
+                    if ( dbHolder()._isLoaded( nsToDatabase( currentOp.getNS() ) , dbpath ) ) {
+                        Client::Context cx( currentOp.getNS(), dbpath, false );
+                        profile(c , currentOp );
+                    }
+                    else {
+                        mongo::log() << "note: not profiling because db went away - probably a close on: "
+                                << currentOp.getNS() << endl;
+                    }
                 }
-                else {
-                    mongo::log() << "note: not profiling because db went away - probably a close on: " << currentOp.getNS() << endl;
+                catch (const AssertionException& assertionEx) {
+                    warning() << "Caught Assertion while trying to profile " << opToString(op)
+                            << " against " << currentOp.getNS()
+                            << ": " << assertionEx.toString() << endl;
                 }
             }
         }
@@ -535,7 +544,7 @@ namespace mongo {
         prefix += '.';
         ClientCursor::invalidate(prefix.c_str());
 
-        NamespaceDetailsTransient::clearForPrefix( prefix.c_str() );
+        NamespaceDetailsTransient::eraseDB( prefix );
 
         dbHolderW().erase( db, path );
         ctx->_clear();
@@ -833,13 +842,13 @@ namespace mongo {
                 i != boost::filesystem::directory_iterator(); ++i ) {
             if ( directoryperdb ) {
                 boost::filesystem::path p = *i;
-                string dbName = p.leaf();
+                string dbName = p.leaf().string();
                 p /= ( dbName + ".ns" );
                 if ( exists( p ) )
                     names.push_back( dbName );
             }
             else {
-                string fileName = boost::filesystem::path(*i).leaf();
+                string fileName = boost::filesystem::path(*i).leaf().string();
                 if ( fileName.length() > 3 && fileName.substr( fileName.length() - 3, 3 ) == ".ns" )
                     names.push_back( fileName.substr( 0, fileName.length() - 3 ) );
             }
@@ -1107,7 +1116,7 @@ namespace mongo {
     }
 
     void acquirePathLock(bool doingRepair) {
-        string name = ( boost::filesystem::path( dbpath ) / "mongod.lock" ).native_file_string();
+        string name = ( boost::filesystem::path( dbpath ) / "mongod.lock" ).string();
 
         bool oldFile = false;
 

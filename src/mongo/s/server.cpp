@@ -21,6 +21,7 @@
 #include <boost/thread/thread.hpp>
 
 #include "mongo/base/initializer.h"
+#include "mongo/db/initialize_server_global_state.h"
 #include "../util/net/message.h"
 #include "../util/startup_test.h"
 #include "../client/connpool.h"
@@ -44,6 +45,7 @@
 #include "cursors.h"
 #include "shard_version.h"
 #include "../util/processinfo.h"
+#include "mongo/db/fail_point_service.h"
 #include "mongo/db/lasterror.h"
 #include "mongo/util/stacktrace.h"
 
@@ -117,6 +119,9 @@ namespace mongo {
                 }
             }
             catch ( DBException& e ) {
+                // note that e.toString() is more detailed on a SocketException than 
+                // e.what().  we should think about what is the right level of detail both 
+                // for logging and return code.
                 log() << "DBException in process: " << e.what() << endl;
 
                 le->raiseError( e.getCode() , e.what() );
@@ -124,8 +129,12 @@ namespace mongo {
                 m.header()->id = r.id();
 
                 if ( r.expectResponse() ) {
-                    BSONObj err = BSON( "$err" << e.what() << "code" << e.getCode() );
-                    replyToQuery( ResultFlag_ErrSet, p , m , err );
+                    BSONObjBuilder b;
+                    b.append("$err",e.what()).append("code",e.getCode());
+                    if( !e._shard.empty() ) {
+                        b.append("shard",e._shard);
+                    }
+                    replyToQuery( ResultFlag_ErrSet, p , m , b.obj() );
                 }
             }
         }
@@ -336,8 +345,17 @@ int _main(int argc, char* argv[]) {
 
     // parse options
     po::variables_map params;
-    if ( ! CmdLine::store( argc, argv, visible_options, hidden_options, positional_options, params ) )
-        return 0;
+    if (!CmdLine::store(std::vector<std::string>(argv, argv + argc),
+                        visible_options,
+                        hidden_options,
+                        positional_options,
+                        params)) {
+        return EXIT_FAILURE;
+    }
+    CmdLine::censor(argc, argv);
+
+    if (!initializeServerGlobalState())
+        return EXIT_FAILURE;
 
     // The default value may vary depending on compile options, but for mongos
     // we want durability to be disabled.
@@ -432,6 +450,10 @@ int _main(int argc, char* argv[]) {
             out() << "configdb: " << e.what() << endl;
             return 9;
         }
+    }
+
+    if (params.count("enableFaultInjection")) {
+        enableFailPointCmd();
     }
 
 #if defined(_WIN32)

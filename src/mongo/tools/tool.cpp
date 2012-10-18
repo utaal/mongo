@@ -118,12 +118,6 @@ namespace mongo {
         // we want durability to be disabled.
         cmdLine.dur = false;
 
-#if( BOOST_VERSION >= 104500 )
-    boost::filesystem::path::default_name_check( boost::filesystem2::no_check );
-#else
-    boost::filesystem::path::default_name_check( boost::filesystem::no_check );
-#endif
-
         _name = argv[0];
 
         /* using the same style as db.cpp */
@@ -241,8 +235,8 @@ namespace mongo {
                 cerr << endl << "If you are running a mongod on the same "
                      "path you should connect to that instead of direct data "
                      "file access" << endl << endl;
-                dbexit( EXIT_CLEAN );
-                ::_exit(-1);
+                dbexit( EXIT_FS );
+                ::_exit(EXIT_FAILURE);
             }
 
             FileAllocator::get()->start();
@@ -313,8 +307,10 @@ namespace mongo {
 
     DBClientBase& Tool::conn( bool slaveIfPaired ) {
         if ( slaveIfPaired && _conn->type() == ConnectionString::SET ) {
-            if (!_slaveConn)
-                _slaveConn = &((DBClientReplicaSet*)_conn)->slaveConn();
+            if (!_slaveConn) {
+                DBClientReplicaSet* rs = static_cast<DBClientReplicaSet*>(_conn);
+                _slaveConn = &rs->slaveConn();
+            }
             return *_slaveConn;
         }
         return *_conn;
