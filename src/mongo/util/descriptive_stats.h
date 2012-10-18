@@ -27,7 +27,7 @@ namespace mongo {
  * NOTEs on the estimator accessors provide information about accuracy
  * of the approximation.
  *
- * The implementation is heavily inspired by the algorithms used in
+ * The implementation of the estimators is heavily inspired by the algorithms used in
  * boost.accumulators (www.boost.org/libs/accumulators/).
  * It differs by being tailored for typical descriptive statistics use cases
  * thus providing a simpler (even though less flexible) interface.
