@@ -63,10 +63,7 @@ namespace mongo {
 
     // need to move to bson/, but has dependency on base64 so move that to bson/util/ first.
     inline string BSONElement::jsonString( JsonStringFormat format, bool includeFieldNames, int pretty ) const {
-        BSONType t = type();
         int sign;
-        if ( t == Undefined )
-            return "undefined";
 
         stringstream s;
         if ( includeFieldNames )
@@ -104,6 +101,14 @@ namespace mongo {
             break;
         case jstNULL:
             s << "null";
+            break;
+        case Undefined:
+            if ( format == Strict ) {
+                s << "{ \"$undefined\" : true }";
+            }
+            else {
+                s << "undefined";
+            }
             break;
         case Object:
             s << embeddedObject().jsonString( format, pretty );
@@ -420,11 +425,16 @@ namespace mongo {
     }
 
     bool BSONObj::valid() const {
+        int mySize = objsize();
+
         try {
             BSONObjIterator it(*this);
             while( it.moreWithEOO() ) {
                 // both throw exception on failure
                 BSONElement e = it.next(true);
+                if ( e.size() >= mySize )
+                    return false;
+
                 e.validate();
 
                 if (e.eoo()) {
@@ -571,6 +581,21 @@ namespace mongo {
             BSONElement y = b.next();
             if ( x != y )
                 return false;
+        }
+
+        return ! a.more();
+    }
+
+    bool BSONObj::isFieldNamePrefixOf( const BSONObj& otherObj ) const {
+        BSONObjIterator a( *this );
+        BSONObjIterator b( otherObj );
+
+        while ( a.more() && b.more() ) {
+            BSONElement x = a.next();
+            BSONElement y = b.next();
+            if ( ! mongoutils::str::equals( x.fieldName() , y.fieldName() ) ) {
+                return false;
+            }
         }
 
         return ! a.more();

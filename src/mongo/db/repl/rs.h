@@ -19,6 +19,7 @@
 #pragma once
 
 #include "mongo/db/commands.h"
+#include "mongo/db/index.h"
 #include "mongo/db/oplog.h"
 #include "mongo/db/oplogreader.h"
 #include "mongo/db/repl/rs_config.h"
@@ -75,9 +76,6 @@ namespace mongo {
 
         bool potentiallyHot() const { return _config.potentiallyHot(); } // not arbiter, not priority 0
         void summarizeMember(stringstream& s) const;
-        // If we could sync from this member.  This doesn't tell us anything about the quality of
-        // this member, just if they are a possible sync target.
-        bool syncable() const;
 
     private:
         friend class ReplSetImpl;
@@ -336,9 +334,6 @@ namespace mongo {
         OpTime lastOpTimeWritten;
         long long lastH; // hash we use to make sure we are reading the right flow of ops and aren't on an out-of-date "fork"
         bool forceSyncFrom(const string& host, string& errmsg, BSONObjBuilder& result);
-        // Check if the current sync target is suboptimal. This must be called while holding a mutex
-        // that prevents the sync source from changing.
-        bool shouldChangeSyncTarget(const OpTime& target) const;
 
         /**
          * Find the closest member (using ping time) with a higher latest optime.
@@ -435,11 +430,6 @@ namespace mongo {
         void _summarizeAsHtml(stringstream&) const;
         void _summarizeStatus(BSONObjBuilder&) const; // for replSetGetStatus command
 
-        /* throws exception if a problem initializing. */
-        ReplSetImpl(ReplSetCmdline&);
-        // used for testing
-        ReplSetImpl();
-
         /* call afer constructing to start - returns fairly quickly after launching its threads */
         void _go();
 
@@ -452,7 +442,7 @@ namespace mongo {
          * Finds the configuration with the highest version number and attempts
          * load it.
          */
-        bool _loadConfigFinish(vector<ReplSetConfig>& v);
+        bool _loadConfigFinish(vector<ReplSetConfig*>& v);
         /**
          * Gather all possible configs (from command line seeds, our own config
          * doc, and any hosts listed therein) and try to initiate from the most
@@ -470,6 +460,11 @@ namespace mongo {
     protected:
         Member *_self;
         bool _buildIndexes;       // = _self->config().buildIndexes
+
+        ReplSetImpl();
+        /* throws exception if a problem initializing. */
+        void init(ReplSetCmdline&);
+
         void setSelfTo(Member *); // use this as it sets buildIndexes var
     private:
         List1<Member> _members; // all members of the set EXCEPT _self.
@@ -493,6 +488,7 @@ namespace mongo {
         Member* head() const { return _members.head(); }
     public:
         const Member* findById(unsigned id) const;
+        Member* findByName(const std::string& hostname) const;
     private:
         void _getTargets(list<Target>&, int &configVersion);
         void getTargets(list<Target>&, int &configVersion);
@@ -506,8 +502,8 @@ namespace mongo {
 
     private:
         bool _syncDoInitialSync_clone( const char *master, const list<string>& dbs , bool dataPass );
-        bool _syncDoInitialSync_applyToHead( replset::InitialSync& init, OplogReader* r , 
-                                             const Member* source, const BSONObj& lastOp, 
+        bool _syncDoInitialSync_applyToHead( replset::SyncTail& syncer, OplogReader* r ,
+                                             const Member* source, const BSONObj& lastOp,
                                              BSONObj& minValidOut);
         void _syncDoInitialSync();
         void syncDoInitialSync();
@@ -548,14 +544,15 @@ namespace mongo {
         void syncThread();
         const OpTime lastOtherOpTime() const;
         static void setMinValid(BSONObj obj);
+        
+        int oplogVersion;
     private:
         IndexPrefetchConfig _indexPrefetchConfig;
     };
 
     class ReplSet : public ReplSetImpl {
     public:
-        ReplSet();
-        ReplSet(ReplSetCmdline& replSetCmdline);
+        static ReplSet* make(ReplSetCmdline& replSetCmdline);
         virtual ~ReplSet() {}
 
         // for the replSetStepDown command
@@ -611,6 +608,9 @@ namespace mongo {
             if( time(0)-_hbmsgTime > 120 ) return "";
             return _hbmsg;
         }
+
+    protected:
+        ReplSet();
     };
 
     /**
@@ -677,6 +677,33 @@ namespace mongo {
         verify(c);
         if( self )
             _hbinfo.health = 1.0;
+    }
+
+    inline bool ignoreUniqueIndex(IndexDetails& idx) {
+        if (!idx.unique()) {
+            return false;
+        }
+        if (!theReplSet) {
+            return false;
+        }
+        // see SERVER-6671
+        MemberState ms = theReplSet->state();
+        if (! ((ms == MemberState::RS_STARTUP2) ||
+               (ms == MemberState::RS_RECOVERING) ||
+               (ms == MemberState::RS_ROLLBACK))) {
+            return false;
+        }
+        // 2 is the oldest oplog version where operations
+        // are fully idempotent.
+        if (theReplSet->oplogVersion < 2) {
+            return false;
+        }
+        // Never ignore _id index
+        if (idx.isIdIndex()) {
+            return false;
+        }
+        
+        return true;
     }
 
 }

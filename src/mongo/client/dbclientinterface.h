@@ -56,7 +56,7 @@ namespace mongo {
         // an extended period of time.
         QueryOption_OplogReplay = 1 << 3,
 
-        /** The server normally times out idle cursors after an inactivy period to prevent excess memory uses
+        /** The server normally times out idle cursors after an inactivity period to prevent excess memory uses
             Set this option to prevent that.
         */
         QueryOption_NoCursorTimeout = 1 << 4,
@@ -631,16 +631,30 @@ namespace mongo {
         bool createCollection(const string &ns, long long size = 0, bool capped = false, int max = 0, BSONObj *info = 0);
 
         /** Get error result from the last write operation (insert/update/delete) on this connection.
+            db doesn't change the command's behavior - it is just for auth checks.
             @return error message text, or empty string if no error.
         */
+        string getLastError(const std::string& db,
+                            bool fsync = false,
+                            bool j = false,
+                            int w = 0,
+                            int wtimeout = 0);
+        // Same as above but defaults to using admin DB
         string getLastError(bool fsync = false, bool j = false, int w = 0, int wtimeout = 0);
 
         /** Get error result from the last write operation (insert/update/delete) on this connection.
+            db doesn't change the command's behavior - it is just for auth checks.
             @return full error object.
 
             If "w" is -1, wait for propagation to majority of nodes.
             If "wtimeout" is 0, the operation will block indefinitely if needed.
         */
+        virtual BSONObj getLastErrorDetailed(const std::string& db,
+                                             bool fsync = false,
+                                             bool j = false,
+                                             int w = 0,
+                                             int wtimeout = 0);
+        // Same as above but defaults to using admin DB
         virtual BSONObj getLastErrorDetailed(bool fsync = false, bool j = false, int w = 0, int wtimeout = 0);
 
         /** Can be called with the returned value from getLastErrorDetailed to extract an error string. 
@@ -841,12 +855,18 @@ namespace mongo {
            @param cache if set to false, the index cache for the connection won't remember this call
            @param background build index in the background (see mongodb docs/wiki for details)
            @param v index version. leave at default value. (unit tests set this parameter.)
+           @param ttl. The value of how many seconds before data should be removed from a collection.
            @return whether or not sent message to db.
              should be true on first call, false on subsequent unless resetIndexCache was called
          */
-        virtual bool ensureIndex( const string &ns , BSONObj keys , bool unique = false, const string &name = "",
-                                  bool cache = true, bool background = false, int v = -1 );
-
+        virtual bool ensureIndex( const string &ns,
+                                  BSONObj keys,
+                                  bool unique = false,
+                                  const string &name = "",
+                                  bool cache = true,
+                                  bool background = false,
+                                  int v = -1,
+                                  int ttl = 0 );
         /**
            clears the index cache, so the subsequent call to ensureIndex for any index will go to the server
          */

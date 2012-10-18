@@ -1,6 +1,7 @@
 // mr.cpp
 
 /**
+ *    Copyright (C) 2012 10gen Inc.
  *
  *    This program is free software: you can redistribute it and/or  modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -28,6 +29,7 @@
 #include "../../s/d_chunk_manager.h"
 #include "../../s/d_logic.h"
 #include "../../s/grid.h"
+#include "mongo/db/kill_current_op.h"
 
 #include "mr.h"
 

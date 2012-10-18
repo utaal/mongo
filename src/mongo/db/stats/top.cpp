@@ -16,10 +16,10 @@
  */
 
 
-#include "pch.h"
-#include "top.h"
-#include "../../util/net/message.h"
-#include "../commands.h"
+#include "mongo/pch.h"
+#include "mongo/db/stats/top.h"
+#include "mongo/util/net/message.h"
+#include "mongo/db/commands.h"
 
 namespace mongo {
 
@@ -119,10 +119,19 @@ namespace mongo {
     }
 
     void Top::_appendToUsageMap( BSONObjBuilder& b , const UsageMap& map ) const {
-        for ( UsageMap::const_iterator i=map.begin(); i!=map.end(); i++ ) {
-            BSONObjBuilder bb( b.subobjStart( i->first ) );
+        // pull all the names into a vector so we can sort them for the user
+        
+        vector<string> names;
+        for ( UsageMap::const_iterator i = map.begin(); i != map.end(); i++ ) {
+            names.push_back( i->first );
+        }
+        
+        std::sort( names.begin(), names.end() );
 
-            const CollectionData& coll = i->second;
+        for ( size_t i=0; i<names.size(); i++ ) {
+            BSONObjBuilder bb( b.subobjStart( names[i] ) );
+
+            const CollectionData& coll = map.find(names[i])->second;
 
             _appendStatsEntry( b , "total" , coll.total );
 

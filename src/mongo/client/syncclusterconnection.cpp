@@ -141,9 +141,17 @@ namespace mongo {
     }
 
     BSONObj SyncClusterConnection::getLastErrorDetailed(bool fsync, bool j, int w, int wtimeout) {
+        return getLastErrorDetailed("admin", fsync, j, w, wtimeout);
+    }
+
+    BSONObj SyncClusterConnection::getLastErrorDetailed(const std::string& db,
+                                                        bool fsync,
+                                                        bool j,
+                                                        int w,
+                                                        int wtimeout) {
         if ( _lastErrors.size() )
             return _lastErrors[0];
-        return DBClientBase::getLastErrorDetailed(fsync,j,w,wtimeout);
+        return DBClientBase::getLastErrorDetailed(db,fsync,j,w,wtimeout);
     }
 
     void SyncClusterConnection::_connect( const std::string& host ) {
@@ -323,7 +331,7 @@ namespace mongo {
                 log() << "query failed to: " << _conns[i]->toString() << " exception" << endl;
             }
         }
-        throw UserException( 8002 , "all servers down!" );
+        throw UserException( 8002 , str::stream() << "all servers down/unreachable when querying: " << _address );
     }
 
     auto_ptr<DBClientCursor> SyncClusterConnection::getMore( const string &ns, long long cursorId, int nToReturn, int options ) {
@@ -436,7 +444,7 @@ namespace mongo {
                 log() << "call failed to: " << _conns[i]->toString() << " exception" << endl;
             }
         }
-        throw UserException( 8008 , "all servers down!" );
+        throw UserException( 8008 , str::stream() << "all servers down/unreachable: " << _address );
     }
 
     void SyncClusterConnection::say( Message &toSend, bool isRetry , string * actualServer ) {

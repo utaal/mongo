@@ -36,7 +36,8 @@ namespace mongo {
     // from d_migrate.cpp
     void logOpForSharding( const char * opstr , const char * ns , const BSONObj& obj , BSONObj * patt );
 
-    int __findingStartInitialTimeout = 5; // configurable for testing
+    // Configurable for testing.
+    int FindingStartCursor::_initialTimeout = 5;
 
     // cached copies of these...so don't rename them, drop them, etc.!!!
     static NamespaceDetails *localOplogMainDetails = 0;
@@ -124,10 +125,30 @@ namespace mongo {
         *b = EOO;
     }
 
+    /* we write to local.oplog.rs:
+         { ts : ..., h: ..., v: ..., op: ..., etc }
+       ts: an OpTime timestamp
+       h: hash
+       v: version
+       op:
+        "i" insert
+        "u" update
+        "d" delete
+        "c" db cmd
+        "db" declares presence of a database (ns is set to the db name + '.')
+        "n" no op
+
+       bb param:
+         if not null, specifies a boolean to pass along to the other side as b: param.
+         used for "justOne" or "upsert" flags on 'd', 'u'
+
+    */
+
     // global is safe as we are in write lock. we put the static outside the function to avoid the implicit mutex 
     // the compiler would use if inside the function.  the reason this is static is to avoid a malloc/free for this
     // on every logop call.
     static BufBuilder logopbufbuilder(8*1024);
+    static const int OPLOG_VERSION = 2;
     static void _logOpRS(const char *opstr, const char *ns, const char *logNS, const BSONObj& obj, BSONObj *o2, bool *bb, bool fromMigrate ) {
         Lock::DBWrite lk1("local");
 
@@ -159,6 +180,7 @@ namespace mongo {
         BSONObjBuilder b(logopbufbuilder);
         b.appendTimestamp("ts", ts.asDate());
         b.append("h", hashNew);
+        b.append("v", OPLOG_VERSION);
         b.append("op", opstr);
         b.append("ns", ns);
         if (fromMigrate) 
@@ -205,26 +227,6 @@ namespace mongo {
         }
     }
 
-    /* we write to local.oplog.$main:
-         { ts : ..., op: ..., ns: ..., o: ... }
-       ts: an OpTime timestamp
-       op:
-        "i" insert
-        "u" update
-        "d" delete
-        "c" db cmd
-        "db" declares presence of a database (ns is set to the db name + '.')
-        "n" no op
-       logNS: where to log it.  0/null means "local.oplog.$main".
-       bb:
-         if not null, specifies a boolean to pass along to the other side as b: param.
-         used for "justOne" or "upsert" flags on 'd', 'u'
-       first: true
-         when set, indicates this is the first thing we have logged for this database.
-         thus, the slave does not need to copy down all the data when it sees this.
-
-       note this is used for single collection logging even when --replSet is enabled.
-    */
     static void _logOpOld(const char *opstr, const char *ns, const char *logNS, const BSONObj& obj, BSONObj *o2, bool *bb, bool fromMigrate ) {
         Lock::DBWrite lk("local");
         static BufBuilder bufbuilder(8*1024); // todo there is likely a mutex on this constructor
@@ -432,7 +434,7 @@ namespace mongo {
                 }
                 _findingStartCursor->advance();
                 RARELY {
-                    if ( _findingStartTimer.seconds() >= __findingStartInitialTimeout ) {
+                    if ( _findingStartTimer.seconds() >= _initialTimeout ) {
                         // If we've scanned enough, switch to find extent mode.
                         createClientCursor( extentFirstLoc( _findingStartCursor->currLoc() ) );
                         _findingStartMode = FindExtent;
@@ -486,33 +488,40 @@ namespace mongo {
         return _qp.nsd()->capFirstNewRecord;
     }
     
-    void wassertExtentNonempty( const Extent *e ) {
-        // TODO ensure this requirement is clearly enforced, or fix.
-        wassert( !e->firstRecord.isNull() );
-    }
-    
-    DiskLoc FindingStartCursor::prevExtentFirstLoc( const DiskLoc &rec ) {
+    DiskLoc FindingStartCursor::prevExtentFirstLoc( const DiskLoc& rec ) const {
         Extent *e = rec.rec()->myExtent( rec );
         if ( _qp.nsd()->capLooped() ) {
-            if ( e->xprev.isNull() ) {
-                e = _qp.nsd()->lastExtent.ext();
-            }
-            else {
-                e = e->xprev.ext();
-            }
-            if ( e->myLoc != _qp.nsd()->capExtent ) {
-                wassertExtentNonempty( e );
-                return e->firstRecord;
+            while( true ) {
+                // Advance e to preceding extent (looping to lastExtent if necessary).
+                if ( e->xprev.isNull() ) {
+                    e = _qp.nsd()->lastExtent.ext();
+                }
+                else {
+                    e = e->xprev.ext();
+                }
+                if ( e->myLoc == _qp.nsd()->capExtent ) {
+                    // Reached the extent containing the oldest data in the collection.
+                    return DiskLoc();
+                }
+                if ( !e->firstRecord.isNull() ) {
+                    // Return the first record of the first non empty extent encountered.
+                    return e->firstRecord;
+                }
             }
         }
         else {
-            if ( !e->xprev.isNull() ) {
+            while( true ) {
+                if ( e->xprev.isNull() ) {
+                    // Reached the beginning of the collection.
+                    return DiskLoc();
+                }
                 e = e->xprev.ext();
-                wassertExtentNonempty( e );
-                return e->firstRecord;
+                if ( !e->firstRecord.isNull() ) {
+                    // Return the first record of the first non empty extent encountered.
+                    return e->firstRecord;
+                }
             }
         }
-        return DiskLoc(); // reached beginning of collection
     }
     
     void FindingStartCursor::createClientCursor( const DiskLoc &startLoc ) {
@@ -759,8 +768,8 @@ namespace mongo {
                 if( !o.getObjectID(_id) ) {
                     /* No _id.  This will be very slow. */
                     Timer t;
-                    updateObjects(ns, o, o, true, false, false, debug, false,
-                                  QueryPlanSelectionPolicy::idElseNatural() );
+                    updateObjectsForReplication(ns, o, o, true, false, false, debug, false,
+                                                QueryPlanSelectionPolicy::idElseNatural() );
                     if( t.millis() >= 2 ) {
                         RARELY OCCASIONALLY log() << "warning, repl doing slow updates (no _id field) for " << ns << endl;
                     }
@@ -775,8 +784,8 @@ namespace mongo {
                               */
                     BSONObjBuilder b;
                     b.append(_id);
-                    updateObjects(ns, o, b.done(), true, false, false , debug, false,
-                                  QueryPlanSelectionPolicy::idElseNatural() );
+                    updateObjectsForReplication(ns, o, b.done(), true, false, false , debug, false,
+                                                QueryPlanSelectionPolicy::idElseNatural() );
                 }
             }
         }
@@ -790,10 +799,18 @@ namespace mongo {
             OpDebug debug;
             BSONObj updateCriteria = op.getObjectField("o2");
             bool upsert = fields[3].booleanSafe() || convertUpdateToUpsert;
-            UpdateResult ur = updateObjects(ns, o, updateCriteria, upsert, /*multi*/ false,
-                                            /*logop*/ false , debug, /*fromMigrate*/ false,
+            UpdateResult ur =
+                updateObjectsForReplication(ns,
+                                            o,
+                                            updateCriteria,
+                                            upsert,
+                                            /*multi*/ false,
+                                            /*logop*/ false,
+                                            debug,
+                                            /*fromMigrate*/ false,
                                             QueryPlanSelectionPolicy::idElseNatural() );
-            if( ur.num == 0 ) { 
+
+            if( ur.num == 0 ) {
                 if( ur.mod ) {
                     if( updateCriteria.nFields() == 1 ) {
                         // was a simple { _id : ... } update criteria

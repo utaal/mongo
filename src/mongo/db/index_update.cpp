@@ -25,9 +25,11 @@
 #include "mongo/db/compact.h"
 #include "mongo/db/extsort.h"
 #include "mongo/db/index.h"
+#include "mongo/db/kill_current_op.h"
 #include "mongo/db/namespace_details.h"
 #include "mongo/db/pdfile_private.h"
 #include "mongo/db/replutil.h"
+#include "mongo/db/repl/rs.h"
 #include "mongo/util/processinfo.h"
 #include "mongo/util/startup_test.h"
 
@@ -126,7 +128,13 @@ namespace mongo {
             BSONObjSet keys;
             for ( int i = 0; i < n; i++ ) {
                 // this call throws on unique constraint violation.  we haven't done any writes yet so that is fine.
-                fetchIndexInserters(/*out*/keys, inserter, d, i, obj, loc);
+                fetchIndexInserters(/*out*/keys, 
+                                    inserter, 
+                                    d, 
+                                    i, 
+                                    obj, 
+                                    loc, 
+                                    ignoreUniqueIndex(d->idx(i)));
                 if( keys.size() > 1 ) {
                     multi.push_back(i);
                     multiKeys.push_back(BSONObjSet());
@@ -143,12 +151,13 @@ namespace mongo {
             unsigned i = multi[j];
             BSONObjSet& keys = multiKeys[j];
             IndexDetails& idx = d->idx(i);
+            bool dupsAllowed = !idx.unique() || ignoreUniqueIndex(idx);
             IndexInterface& ii = idx.idxInterface();
             Ordering ordering = Ordering::make(idx.keyPattern());
             d->setIndexIsMultikey(ns, i);
             for( BSONObjSet::iterator k = ++keys.begin()/*skip 1*/; k != keys.end(); k++ ) {
                 try {
-                    ii.bt_insert(idx.head, loc, *k, ordering, !idx.unique(), idx);
+                    ii.bt_insert(idx.head, loc, *k, ordering, dupsAllowed, idx);
                 } catch (AssertionException& e) {
                     if( e.getCode() == 10287 && (int) i == d->nIndexes ) {
                         DEV log() << "info: caught key already in index on bg indexing (ok)" << endl;
@@ -269,7 +278,7 @@ namespace mongo {
 
         tlog(1) << "fastBuildIndex " << ns << " idxNo:" << idxNo << ' ' << idx.info.obj().toString() << endl;
 
-        bool dupsAllowed = !idx.unique();
+        bool dupsAllowed = !idx.unique() || ignoreUniqueIndex(idx);
         bool dropDups = idx.dropDups() || inDBRepair;
         BSONObj order = idx.keyPattern();
 
@@ -328,7 +337,7 @@ namespace mongo {
             log() << "\t fastBuildIndex dupsToDrop:" << dupsToDrop.size() << endl;
 
         for( set<DiskLoc>::iterator i = dupsToDrop.begin(); i != dupsToDrop.end(); i++ ){
-            theDataFileMgr.deleteRecord( ns, i->rec(), *i, false /* cappedOk */ , true /* noWarn */ , isMaster( ns ) /* logOp */ );
+            theDataFileMgr.deleteRecord( d, ns, i->rec(), *i, false /* cappedOk */ , true /* noWarn */ , isMaster( ns ) /* logOp */ );
             getDur().commitIfNeeded();
         }
 
@@ -375,7 +384,7 @@ namespace mongo {
                         bool ok = cc->advance();
                         ClientCursor::YieldData yieldData;
                         massert( 16093, "after yield cursor deleted" , cc->prepareToYield( yieldData ) );
-                        theDataFileMgr.deleteRecord( ns, toDelete.rec(), toDelete, false, true , true );
+                        theDataFileMgr.deleteRecord( d, ns, toDelete.rec(), toDelete, false, true , true );
                         if( !cc->recoverFromYield( yieldData ) ) {
                             cc.release();
                             if( !ok ) {

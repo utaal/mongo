@@ -47,9 +47,15 @@ namespace mongo {
          * reasons.) If something is misconfigured, throws an exception. If the
          * host couldn't be queried or is just blank, ok() will be false.
          */
-        ReplSetConfig(const HostAndPort& h);
+        static ReplSetConfig* make(const HostAndPort& h);
 
-        ReplSetConfig(BSONObj cfg, bool force=false);
+        static ReplSetConfig* make(BSONObj cfg, bool force=false);
+
+        /**
+         * This uses DBDirectClient to check itself for a config.  This way we don't need to connect
+         * to ourselves over the network to fetch our own config.
+         */
+        static ReplSetConfig* makeDirect();
 
         bool ok() const { return _ok; }
 
@@ -153,7 +159,22 @@ namespace mongo {
         int getMajority() const;
 
         bool _constructed;
+
+        /**
+         * Get the timeout to use for heartbeats.
+         */
+        int getHeartbeatTimeout() const;
+
+        /**
+         * Default timeout: 10 seconds
+         */
+        static const int DEFAULT_HB_TIMEOUT;
+
     private:
+        ReplSetConfig();
+        void init(const HostAndPort& h);
+        void init(BSONObj cfg, bool force);
+
         bool _ok;
         int _majority;
 
@@ -161,6 +182,11 @@ namespace mongo {
         void clear();
 
         struct TagClause;
+
+        /**
+         * The timeout to use for heartbeats
+         */
+        int _heartbeatTimeout;
 
         /**
          * This is a logical grouping of servers.  It is pointed to by a set of

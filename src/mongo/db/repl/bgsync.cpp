@@ -295,9 +295,11 @@ namespace replset {
                         return;
                     }
 
-                    // re-evaluate quality of sync target
-                    if (shouldChangeSyncTarget()) {
-                        return;
+                    {
+                        boost::unique_lock<boost::mutex> lock(_mutex);
+                        if (!_currentSyncTarget || !_currentSyncTarget->hbinfo().hbstate.readable()) {
+                            return;
+                        }
                     }
 
                     r.more();
@@ -343,20 +345,6 @@ namespace replset {
             // looping back is ok because this is a tailable cursor
         }
     }
-
-    bool BackgroundSync::shouldChangeSyncTarget() {
-        boost::unique_lock<boost::mutex> lock(_mutex);
-
-        // is it even still around?
-        if (!_currentSyncTarget || !_currentSyncTarget->hbinfo().hbstate.readable()) {
-            return true;
-        }
-
-        // check other members: is any member's optime more than 30 seconds ahead of the guy we're
-        // syncing from?
-        return theReplSet->shouldChangeSyncTarget(_currentSyncTarget->hbinfo().opTime);
-    }
-
 
     bool BackgroundSync::peek(BSONObj* op) {
         {
@@ -538,7 +526,7 @@ namespace replset {
         _lastH = theReplSet->lastH;
 
         LOG(1) << "replset bgsync fetch queue set to: " << _lastOpTimeFetched << " " << _lastH << rsLog;
-   }
+    }
 
 } // namespace replset
 } // namespace mongo

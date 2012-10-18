@@ -39,6 +39,31 @@ namespace replset {
         SyncTail(BackgroundSyncInterface *q);
         virtual ~SyncTail();
         virtual bool syncApply(const BSONObj &o, bool convertUpdateToUpsert = false);
+
+        /**
+         * Apply ops from applyGTEObj's ts to at least minValidObj's ts.  Note that, due to
+         * batching, this may end up applying ops beyond minValidObj's ts.
+         *
+         * @param applyGTEObj the op to start replicating at.  This is actually not used except in
+         *                    comparison to minValidObj: the background sync thread keeps its own
+         *                    record of where we're synced to and starts providing ops from that
+         *                    point.
+         * @param minValidObj the op to finish syncing at.  This function cannot return (other than
+         *                    fatally erroring out) without applying at least this op.
+         * @param func        whether this should use initial sync logic (recloning docs) or
+         *                    "normal" logic.
+         * @return BSONObj    the op that was synced to.  This may be greater than minValidObj, as a
+         *                    single batch might blow right by minvalid. If applyGTEObj is the same
+         *                    op as minValidObj, this will be applyGTEObj.
+         */
+        BSONObj oplogApplySegment(const BSONObj& applyGTEObj, const BSONObj& minValidObj,
+                               MultiSyncApplyFunc func);
+
+        /**
+         * Runs oplogApplySegment without allowing recloning documents.
+         */
+        virtual BSONObj oplogApplication(const BSONObj& applyGTEObj, const BSONObj& minValidObj);
+
         void oplogApplication();
         bool peek(BSONObj* obj);
 
@@ -72,12 +97,16 @@ namespace replset {
     protected:
         // Cap the batches using the limit on journal commits.
         // This works out to be 100 MB (64 bit) or 50 MB (32 bit)
-        static const unsigned int replBatchSizeBytes = dur::UncommittedBytesLimit;
-        static const int replBatchLimitSeconds = 5;
+        static const unsigned int replBatchLimitBytes = dur::UncommittedBytesLimit;
+        static const int replBatchLimitSeconds = 1;
+        static const unsigned int replBatchLimitOperations = 5000;
 
         // Prefetch and write a deque of operations, using the supplied function.
         // Initial Sync and Sync Tail each use a different function.
         void multiApply(std::deque<BSONObj>& ops, MultiSyncApplyFunc applyFunc);
+
+        // The version of the last op to be read
+        int oplogVersion;
 
     private:
         BackgroundSyncInterface* _networkQueue;
@@ -94,6 +123,7 @@ namespace replset {
         void fillWriterVectors(const std::deque<BSONObj>& ops, 
                                std::vector< std::vector<BSONObj> >* writerVectors);
         void handleSlaveDelay(const BSONObj& op);
+        void setOplogVersion(const BSONObj& op);
     };
 
     /**
@@ -103,7 +133,12 @@ namespace replset {
     public:
         virtual ~InitialSync();
         InitialSync(BackgroundSyncInterface *q);
-        void oplogApplication(const BSONObj& applyGTEObj, const BSONObj& minValidObj);
+
+        /**
+         * Creates the initial oplog entry: applies applyGTEObj and writes it to the oplog.  Then
+         * this runs oplogApplySegment allowing recloning documents.
+         */
+        BSONObj oplogApplication(const BSONObj& applyGTEObj, const BSONObj& minValidObj);
     };
 
     // TODO: move hbmsg into an error-keeping class (SERVER-4444)

@@ -39,7 +39,7 @@ namespace mongo {
 namespace replset {
 
     SyncTail::SyncTail(BackgroundSyncInterface *q) :
-        Sync(""), _networkQueue(q)
+        Sync(""), oplogVersion(0), _networkQueue(q)
     {}
 
     SyncTail::~SyncTail() {}
@@ -145,13 +145,6 @@ namespace replset {
                 }
             }
             catch (DBException& e) {
-                // Skip duplicate key exceptions.
-                // These are relatively common on initial sync: if a document is inserted
-                // early in the clone step, the insert will be replayed but the document
-                // will probably already have been cloned over.
-                if( e.getCode() == 11000 || e.getCode() == 11001 || e.getCode() == 12582) {
-                    return; // ignore
-                }
                 error() << "exception: " << e.what() << " on: " << it->toString() << endl;
                 fassertFailed(16361);
             }
@@ -249,44 +242,31 @@ namespace replset {
 
     InitialSync::~InitialSync() {}
 
-
-    /* initial oplog application, during initial sync, after cloning.
-    */
-    void InitialSync::oplogApplication(const BSONObj& applyGTEObj, const BSONObj& minValidObj) {
+    BSONObj SyncTail::oplogApplySegment(const BSONObj& applyGTEObj, const BSONObj& minValidObj,
+                                     MultiSyncApplyFunc func) {
         OpTime applyGTE = applyGTEObj["ts"]._opTime();
         OpTime minValid = minValidObj["ts"]._opTime();
 
-        if (replSetForceInitialSyncFailure > 0) {
-            log() << "replSet test code invoked, forced InitialSync failure: " << replSetForceInitialSyncFailure << rsLog;
-            replSetForceInitialSyncFailure--;
-            throw DBException("forced error",0);
-        }
+        // We have to keep track of the last op applied to the data, because there's no other easy
+        // way of getting this data synchronously.  Batches may go past minValidObj, so we need to
+        // know to bump minValid past minValidObj.
+        BSONObj lastOp = applyGTEObj;
+        OpTime ts = applyGTE;
 
-        syncApply(applyGTEObj);
-        _logOpObjRS(applyGTEObj);
-
-
-        // if there were no writes during the initial sync, there will be nothing in the queue so
-        // just go live
-        if (minValid == applyGTE) {
-            return;
-        }
-
-        OpTime ts;
         time_t start = time(0);
         unsigned long long n = 0, lastN = 0;
-        
+
         while( ts < minValid ) {
             OpQueue ops;
 
-            while (ops.getSize() < replBatchSizeBytes) {
+            while (ops.getSize() < replBatchLimitBytes) {
                 if (tryPopAndWaitForMore(&ops)) {
                     break;
                 }
             }
-
+            setOplogVersion(ops.getDeque().front());
             
-            multiApply(ops.getDeque(), multiInitialSyncApply);
+            multiApply(ops.getDeque(), func);
 
             n += ops.getDeque().size();
 
@@ -302,11 +282,46 @@ namespace replset {
             }
 
             // we want to keep a record of the last op applied, to compare with minvalid
-            const BSONObj& lastOp = ops.getDeque().back();
+            lastOp = ops.getDeque().back();
             OpTime tempTs = lastOp["ts"]._opTime();
             applyOpsToOplog(&ops.getDeque());
 
             ts = tempTs;
+        }
+
+        return lastOp;
+    }
+
+    /* initial oplog application, during initial sync, after cloning.
+    */
+    BSONObj InitialSync::oplogApplication(const BSONObj& applyGTEObj, const BSONObj& minValidObj) {
+        if (replSetForceInitialSyncFailure > 0) {
+            log() << "replSet test code invoked, forced InitialSync failure: " << replSetForceInitialSyncFailure << rsLog;
+            replSetForceInitialSyncFailure--;
+            throw DBException("forced error",0);
+        }
+
+        // create the initial oplog entry
+        syncApply(applyGTEObj);
+        _logOpObjRS(applyGTEObj);
+
+        return oplogApplySegment(applyGTEObj, minValidObj, multiInitialSyncApply);
+    }
+
+    BSONObj SyncTail::oplogApplication(const BSONObj& applyGTEObj, const BSONObj& minValidObj) {
+        return oplogApplySegment(applyGTEObj, minValidObj, multiSyncApply);
+    }
+
+    void SyncTail::setOplogVersion(const BSONObj& op) {
+        BSONElement version = op["v"];
+        // old primaries do not get the unique index ignoring feature
+        // because some of their ops are not imdepotent, see
+        // SERVER-7186
+        if (version.eoo()) {
+            theReplSet->oplogVersion = 1;
+            RARELY log() << "warning replset primary is an older version than we are; upgrade recommended" << endl;
+        } else {
+            theReplSet->oplogVersion = version.Int();
         }
     }
 
@@ -323,7 +338,7 @@ namespace replset {
             // always fetch a few ops first
             // tryPopAndWaitForMore returns true when we need to end a batch early
             while (!tryPopAndWaitForMore(&ops) && 
-                   (ops.getSize() < replBatchSizeBytes)) {
+                   (ops.getSize() < replBatchLimitBytes)) {
 
                 if (theReplSet->isPrimary()) {
                     return;
@@ -331,10 +346,13 @@ namespace replset {
 
                 int now = batchTimer.seconds();
 
-                // don't wait more than five seconds building up a batch
-                if (!ops.empty() && now > replBatchLimitSeconds)
-                    break;
-
+                // apply replication batch limits
+                if (!ops.empty()) {
+                    if (now > replBatchLimitSeconds)
+                        break;
+                    if (ops.getDeque().size() > replBatchLimitOperations)
+                        break;
+                }
                 // occasionally check some things
                 if (ops.empty() || now > lastTimeChecked) {
                     lastTimeChecked = now;
@@ -375,6 +393,7 @@ namespace replset {
             }
 
             const BSONObj& lastOp = ops.getDeque().back();
+            setOplogVersion(lastOp);
             handleSlaveDelay(lastOp);
 
             // Set minValid to the last op to be applied in this next batch.
@@ -411,6 +430,7 @@ namespace replset {
             // otherwise, apply what we have
             return true;
         }
+
         // check for commands
         if ((op["op"].valuestrsafe()[0] == 'c') ||
             // Index builds are acheived through the use of an insert op, not a command op.
@@ -426,6 +446,28 @@ namespace replset {
             return true;
         }
 
+        // check for oplog version change
+        BSONElement elemVersion = op["v"];
+        int curVersion = 0;
+        if (elemVersion.eoo())
+            // missing version means version 1
+            curVersion = 1;
+        else
+            curVersion = elemVersion.Int();
+
+        if (curVersion != oplogVersion) {
+            // Version changes cause us to end a batch.
+            // If we are starting a new batch, reset version number
+            // and continue.
+            if (ops->empty()) {
+                oplogVersion = curVersion;
+            } 
+            else {
+                // End batch early
+                return true;
+            }
+        }
+    
         // Copy the op to the deque and remove it from the bgsync queue.
         ops->push_back(op);
         _networkQueue->consume();
@@ -605,20 +647,6 @@ namespace replset {
     bool ReplSetImpl::gotForceSync() {
         lock lk(this);
         return _forceSyncTarget != 0;
-    }
-
-    bool ReplSetImpl::shouldChangeSyncTarget(const OpTime& targetOpTime) const {
-        for (Member *m = _members.head(); m; m = m->next()) {
-            // This compares the current sync source with other reachable members. It may not know
-            // what the latest time in the set is if the primary is unreachable.  If the other
-            // members we can reach are within 30 seconds of the current source's optime, we won't
-            // switch sources.
-            if (m->syncable() && targetOpTime.getSecs()+30 < m->hbinfo().opTime.getSecs()) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     void ReplSetImpl::_syncThread() {

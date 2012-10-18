@@ -476,7 +476,7 @@ namespace mongo {
                             /* can't delete from a capped collection - so we truncate instead. if this item must go,
                             so must all successors!!! */
                             try {
-                                /** todo: IIRC cappedTrunateAfter does not handle completely empty.  todo. */
+                                /** todo: IIRC cappedTruncateAfter does not handle completely empty.  todo. */
                                 // this will crazy slow if no _id index.
                                 long long start = Listener::getElapsedTimeMillis();
                                 DiskLoc loc = Helpers::findOne(d.ns, pattern, false);
@@ -573,6 +573,23 @@ namespace mongo {
     }
 
     void ReplSetImpl::syncRollback(OplogReader&r) {
+        // check that we are at minvalid, otherwise we cannot rollback as we may be in an
+        // inconsistent state
+        {
+            Lock::DBRead lk("local.replset.minvalid");
+            BSONObj mv;
+            if( Helpers::getSingleton("local.replset.minvalid", mv) ) {
+                OpTime minvalid = mv["ts"]._opTime();
+                if( minvalid > lastOpTimeWritten ) {
+                    log() << "replSet need to rollback, but in inconsistent state" << endl;
+                    log() << "minvalid: " << minvalid.toString() << " our last optime: "
+                          << lastOpTimeWritten.toString() << endl;
+                    changeState(MemberState::RS_FATAL);
+                    return;
+                }
+            }
+        }
+
         unsigned s = _syncRollback(r);
         if( s )
             sleepsecs(s);
@@ -591,8 +608,8 @@ namespace mongo {
         }
 
         if( state().secondary() ) {
-            /* by doing this, we will not service reads (return an error as we aren't in secondary staate.
-               that perhaps is moot becasue of the write lock above, but that write lock probably gets deferred
+            /* by doing this, we will not service reads (return an error as we aren't in secondary state.
+               that perhaps is moot because of the write lock above, but that write lock probably gets deferred
                or removed or yielded later anyway.
 
                also, this is better for status reporting - we know what is happening.

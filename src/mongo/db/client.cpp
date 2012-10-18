@@ -20,22 +20,25 @@
    to an open socket (or logical connection if pooling on sockets) from a client.
 */
 
-#include "pch.h"
-#include "db.h"
-#include "client.h"
-#include "curop-inl.h"
-#include "json.h"
-#include "security.h"
-#include "commands.h"
-#include "instance.h"
-#include "../s/d_logic.h"
-#include "dbwebserver.h"
-#include "../util/mongoutils/html.h"
-#include "../util/mongoutils/checksum.h"
-#include "../util/file_allocator.h"
-#include "repl/rs.h"
-#include "../scripting/engine.h"
-#include "pagefault.h"
+#include "mongo/pch.h"
+
+#include "mongo/db/client.h"
+
+#include "mongo/db/db.h"
+#include "mongo/db/commands.h"
+#include "mongo/db/curop-inl.h"
+#include "mongo/db/kill_current_op.h"
+#include "mongo/db/dbwebserver.h"
+#include "mongo/db/instance.h"
+#include "mongo/db/json.h"
+#include "mongo/db/pagefault.h"
+#include "mongo/db/repl/rs.h"
+#include "mongo/s/d_logic.h"
+#include "mongo/scripting/engine.h"
+#include "mongo/db/security.h"
+#include "mongo/util/file_allocator.h"
+#include "mongo/util/mongoutils/checksum.h"
+#include "mongo/util/mongoutils/html.h"
 
 namespace mongo {
   
@@ -93,19 +96,9 @@ namespace mongo {
     /* each thread which does db operations has a Client object in TLS.
        call this when your thread starts.
     */
-#if defined _DEBUG
-    static unsigned long long nThreads = 0;
-    void assertStartingUp() { 
-        verify( nThreads <= 1 );
-    }
-#else
-    void assertStartingUp() { }
-#endif
-
     Client& Client::initThread(const char *desc, AbstractMessagingPort *mp) {
 #if defined(_DEBUG)
-        { 
-            nThreads++; // never decremented.  this is for casi class asserts
+        {
             if( sizeof(void*) == 8 ) {
                 StackChecker sc;
                 sc.init();
@@ -386,43 +379,6 @@ namespace mongo {
         return c->toString();
     }
 
-    void KillCurrentOp::interruptJs( AtomicUInt *op ) {
-        if ( !globalScriptEngine )
-            return;
-        if ( !op ) {
-            globalScriptEngine->interruptAll();
-        }
-        else {
-            globalScriptEngine->interrupt( *op );
-        }
-    }
-
-    void KillCurrentOp::killAll() {
-        _globalKill = true;
-        interruptJs( 0 );
-    }
-
-    void KillCurrentOp::kill(AtomicUInt i) {
-        bool found = false;
-        {
-            scoped_lock l( Client::clientsMutex );
-            for( set< Client* >::const_iterator j = Client::clients.begin(); !found && j != Client::clients.end(); ++j ) {
-                for( CurOp *k = ( *j )->curop(); !found && k; k = k->parent() ) {
-                    if ( k->opNum() == i ) {
-                        k->kill();
-                        for( CurOp *l = ( *j )->curop(); l != k; l = l->parent() ) {
-                            l->kill();
-                        }
-                        found = true;
-                    }
-                }
-            }
-        }
-        if ( found ) {
-            interruptJs( &i );
-        }
-    }
-
     void Client::gotHandshake( const BSONObj& o ) {
         BSONObjIterator i(o);
 
@@ -693,17 +649,54 @@ namespace mongo {
 
 #define OPDEBUG_APPEND_NUMBER(x) if( x != -1 ) b.appendNumber( #x , (x) )
 #define OPDEBUG_APPEND_BOOL(x) if( x ) b.appendBool( #x , (x) )
-    void OpDebug::append( const CurOp& curop, BSONObjBuilder& b ) const {
+    bool OpDebug::append(const CurOp& curop, BSONObjBuilder& b, size_t maxSize) const {
         b.append( "op" , iscommand ? "command" : opToString( op ) );
         b.append( "ns" , ns.toString() );
-        if ( ! query.isEmpty() )
-            b.append( iscommand ? "command" : "query" , query );
-        else if ( ! iscommand && curop.haveQuery() )
-            curop.appendQuery( b , "query" );
-
-        if ( ! updateobj.isEmpty() )
-            b.append( "updateobj" , updateobj );
         
+        int queryUpdateObjSize = 0;
+        if (!query.isEmpty()) {
+            queryUpdateObjSize += query.objsize();
+        }
+        else if (!iscommand && curop.haveQuery()) {
+            queryUpdateObjSize += curop.query()["query"].size();
+        }
+
+        if (!updateobj.isEmpty()) {
+            queryUpdateObjSize += updateobj.objsize();
+        }
+
+        if (static_cast<size_t>(queryUpdateObjSize) > maxSize) {
+            if (!query.isEmpty()) {
+                // Use 60 since BSONObj::toString can truncate strings into 150 chars
+                // and we want to have enough room for both query and updateobj when
+                // the entire document is going to be serialized into a string
+                const string abbreviated(query.toString(false, false), 0, 60);
+                b.append(iscommand ? "command" : "query", abbreviated + "...");
+            }
+            else if (!iscommand && curop.haveQuery()) {
+                const string abbreviated(curop.query()["query"].toString(false, false), 0, 60);
+                b.append("query", abbreviated + "...");
+            }
+
+            if (!updateobj.isEmpty()) {
+                const string abbreviated(updateobj.toString(false, false), 0, 60);
+                b.append("updateobj", abbreviated + "...");
+            }
+
+            return false;
+        }
+
+        if (!query.isEmpty()) {
+            b.append(iscommand ? "command" : "query", query);
+        }
+        else if (!iscommand && curop.haveQuery()) {
+            curop.appendQuery(b, "query");
+        }
+
+        if (!updateobj.isEmpty()) {
+            b.append("updateobj", updateobj);
+        }
+
         const bool moved = (nmoved >= 1);
 
         OPDEBUG_APPEND_NUMBER( cursorid );
@@ -724,14 +717,15 @@ namespace mongo {
 
         b.appendNumber( "numYield" , curop.numYields() );
         b.append( "lockStats" , curop.lockStat().report() );
-        
-        if ( ! exceptionInfo.empty() ) 
+
+        if ( ! exceptionInfo.empty() )
             exceptionInfo.append( b , "exception" , "exceptionCode" );
-        
+
         OPDEBUG_APPEND_NUMBER( nreturned );
         OPDEBUG_APPEND_NUMBER( responseLength );
         b.append( "millis" , executionTime );
-        
+
+        return true;
     }
 
 }

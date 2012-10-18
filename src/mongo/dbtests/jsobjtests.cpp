@@ -198,6 +198,11 @@ namespace JsobjTests {
                     verify( ! k.isPrefixOf( BSON( "x" << "hi" ) ) );
                     verify( k.isPrefixOf( BSON( "x" << 1 << "a" << "hi" ) ) );
                 }
+                {
+                    BSONObj k = BSON( "x" << 1 );
+                    verify( k.isFieldNamePrefixOf( BSON( "x" << "hi" ) ) );
+                    verify( ! k.isFieldNamePrefixOf( BSON( "a" << 1  ) ) );
+                }
             }
         };
 
@@ -611,7 +616,7 @@ namespace JsobjTests {
                         ASSERT( a.woCompare(b, Ordering::make(BSONObj())) > 0 );
                     }
                     {
-                        // this is an uncompactible key:
+                        // this is an uncompactable key:
                         BSONObj uc1 = BSONObjBuilder().appendDate("", -50).appendCode("", "abc").obj();
                         BSONObj uc2 = BSONObjBuilder().appendDate("", 55).appendCode("", "abc").obj();
                         ASSERT( uc1.woCompare(uc2, Ordering::make(BSONObj())) < 0 );
@@ -2166,33 +2171,6 @@ namespace JsobjTests {
         }
     };
 
-    class BSONFieldTests {
-    public:
-        void run() {
-            {
-                BSONField<int> x("x");
-                BSONObj o = BSON( x << 5 );
-                ASSERT_EQUALS( BSON( "x" << 5 ) , o );
-            }
-
-            {
-                BSONField<int> x("x");
-                BSONObj o = BSON( x.make(5) );
-                ASSERT_EQUALS( BSON( "x" << 5 ) , o );
-            }
-
-            {
-                BSONField<int> x("x");
-                BSONObj o = BSON( x(5) );
-                ASSERT_EQUALS( BSON( "x" << 5 ) , o );
-
-                o = BSON( x.gt(5) );
-                ASSERT_EQUALS( BSON( "x" << BSON( "$gt" << 5 ) ) , o );
-            }
-
-        }
-    };
-
     class BSONForEachTest {
     public:
         void run() {
@@ -2399,7 +2377,6 @@ namespace JsobjTests {
             add< ElementSetTest >();
             add< EmbeddedNumbers >();
             add< BuilderPartialItearte >();
-            add< BSONFieldTests >();
             add< BSONForEachTest >();
             add< StringDataTest >();
             add< CompareOps >();
