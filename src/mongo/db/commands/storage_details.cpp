@@ -20,23 +20,13 @@
 #include "mongo/pch.h"
 
 #include <ctime>
-#include <fstream>
-#include <iostream>
-#include <list>
 #include <string>
 
-#include <boost/array.hpp>
-#include <boost/filesystem/convenience.hpp>
-#include <boost/filesystem/operations.hpp>
-
-//TODO(andrea.lattuada) cleanup imports
-#include "mongo/client/dbclientcursor.h"
 #include "mongo/db/commands.h"
 #include "mongo/db/db.h"
 #include "mongo/db/jsobj.h"
 #include "mongo/db/kill_current_op.h"
 #include "mongo/db/namespace_details.h"
-#include "mongo/tools/tool.h"
 #include "mongo/util/processinfo.h"
 #include "mongo/util/mongoutils/str.h"
 
