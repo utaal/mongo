@@ -165,4 +165,17 @@ namespace mongo {
          return x & 0x1;
     }
 
+    bool ProcessInfo::pagesInMemory(char* start, size_t numPages, vector<bool>& out) {
+        start = getPageAddress(start);
+        scoped_array<char> vec(new char[numPages]);
+        if (mincore(start, numPages * pageSizeBytes, vec.get())) {
+            log() << "mincore failed: " << errnoWithDescription() << endl;
+            return false;
+        }
+        for (size_t i = 0; i < numPages; ++i) {
+            out[i] = (0x1 & vec[i]) == 0x1;
+        }
+        return true;
+    }
+
 }
