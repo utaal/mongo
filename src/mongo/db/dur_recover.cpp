@@ -16,31 +16,34 @@
 *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "pch.h"
+#include "mongo/pch.h"
 
-#include "dur.h"
-#include "dur_stats.h"
-#include "dur_recover.h"
-#include "dur_journal.h"
-#include "dur_journalformat.h"
-#include "durop.h"
-#include "namespace.h"
-#include "../util/mongoutils/str.h"
-#include "../util/bufreader.h"
-#include "../util/concurrency/race.h"
-#include "pdfile.h"
-#include "database.h"
-#include "db.h"
-#include "../util/startup_test.h"
-#include "../util/checksum.h"
-#include "cmdline.h"
-#include "curop.h"
-#include "mongommf.h"
-#include "../util/compress.h"
-#include <sys/stat.h>
-#include <fcntl.h>
-#include "dur_commitjob.h"
+#include "mongo/db/dur_recover.h"
+
 #include <boost/filesystem/operations.hpp>
+#include <fcntl.h>
+#include <sys/stat.h>
+
+#include "mongo/db/cmdline.h"
+#include "mongo/db/curop.h"
+#include "mongo/db/database.h"
+#include "mongo/db/db.h"
+#include "mongo/db/dur.h"
+#include "mongo/db/dur_commitjob.h"
+#include "mongo/db/dur_journal.h"
+#include "mongo/db/dur_journalformat.h"
+#include "mongo/db/dur_stats.h"
+#include "mongo/db/durop.h"
+#include "mongo/db/kill_current_op.h"
+#include "mongo/db/mongommf.h"
+#include "mongo/db/namespace.h"
+#include "mongo/db/pdfile.h"
+#include "mongo/util/bufreader.h"
+#include "mongo/util/checksum.h"
+#include "mongo/util/compress.h"
+#include "mongo/util/concurrency/race.h"
+#include "mongo/util/mongoutils/str.h"
+#include "mongo/util/startup_test.h"
 
 using namespace mongoutils;
 
@@ -55,7 +58,7 @@ namespace mongo {
             // might be a pointer into mmaped Journal file
             const char *dbName;
 
-            // thse are pointers into the memory mapped journal file
+            // those are pointers into the memory mapped journal file
             const JEntry *e;  // local db sentinel is already parsed out here into dbName
 
             // if not one of the two simple JEntry's above, this is the operation:
@@ -72,7 +75,7 @@ namespace mongo {
                     i != boost::filesystem::directory_iterator();
                     ++i ) {
                 boost::filesystem::path filepath = *i;
-                string fileName = boost::filesystem::path(*i).leaf();
+                string fileName = boost::filesystem::path(*i).leaf().string();
                 if( str::startsWith(fileName, "j._") ) {
                     unsigned u = str::toUnsigned( str::after(fileName, '_') );
                     if( m.count(u) ) {
@@ -85,7 +88,7 @@ namespace mongo {
                 if( i != m.begin() && m.count(i->first - 1) == 0 ) {
                     uasserted(13532,
                     str::stream() << "unexpected file in journal directory " << dir.string()
-                      << " : " << boost::filesystem::path(i->second).leaf() << " : can't find its preceeding file");
+                      << " : " << boost::filesystem::path(i->second).leaf().string() << " : can't find its preceding file");
                 }
                 files.push_back(i->second);
             }

@@ -425,11 +425,16 @@ namespace mongo {
     }
 
     bool BSONObj::valid() const {
+        int mySize = objsize();
+
         try {
             BSONObjIterator it(*this);
             while( it.moreWithEOO() ) {
                 // both throw exception on failure
                 BSONElement e = it.next(true);
+                if ( e.size() >= mySize )
+                    return false;
+
                 e.validate();
 
                 if (e.eoo()) {
@@ -576,6 +581,21 @@ namespace mongo {
             BSONElement y = b.next();
             if ( x != y )
                 return false;
+        }
+
+        return ! a.more();
+    }
+
+    bool BSONObj::isFieldNamePrefixOf( const BSONObj& otherObj ) const {
+        BSONObjIterator a( *this );
+        BSONObjIterator b( otherObj );
+
+        while ( a.more() && b.more() ) {
+            BSONElement x = a.next();
+            BSONElement y = b.next();
+            if ( ! mongoutils::str::equals( x.fieldName() , y.fieldName() ) ) {
+                return false;
+            }
         }
 
         return ! a.more();

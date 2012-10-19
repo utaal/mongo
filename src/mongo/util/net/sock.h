@@ -125,6 +125,8 @@ namespace mongo {
      * will be stale */
     string getHostNameCached();
 
+    string prettyHostName();
+
     /**
      * thrown by Socket and SockAddr
      */
@@ -143,7 +145,7 @@ namespace mongo {
 
         bool shouldPrint() const { return _type != CLOSED; }
         virtual string toString() const;
-
+        virtual const std::string* server() const { return &_server; }
     private:
 
         // TODO: Allow exceptions better control over their messages

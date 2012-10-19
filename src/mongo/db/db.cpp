@@ -32,9 +32,12 @@
 #include "mongo/db/dbmessage.h"
 #include "mongo/db/dbwebserver.h"
 #include "mongo/db/dur.h"
+#include "mongo/db/fail_point_service.h"
+#include "mongo/db/initialize_server_global_state.h"
 #include "mongo/db/instance.h"
 #include "mongo/db/introspect.h"
 #include "mongo/db/json.h"
+#include "mongo/db/kill_current_op.h"
 #include "mongo/db/module.h"
 #include "mongo/db/pdfile.h"
 #include "mongo/db/repl.h"
@@ -349,7 +352,7 @@ namespace mongo {
         boost::filesystem::path path( dbpath );
         for ( boost::filesystem::directory_iterator i( path );
                 i != boost::filesystem::directory_iterator(); ++i ) {
-            string fileName = boost::filesystem::path(*i).leaf();
+            string fileName = boost::filesystem::path(*i).leaf().string();
             if ( boost::filesystem::is_directory( *i ) &&
                     fileName.length() && fileName[ 0 ] == '$' )
                 boost::filesystem::remove_all( *i );
@@ -612,11 +615,6 @@ void show_help_text(po::options_description options) {
     cout << options << endl;
 };
 
-/* Return error string or "" if no errors. */
-string arg_error_check(int argc, char* argv[]) {
-    return "";
-}
-
 static int mongoDbMain(int argc, char* argv[], char** envp);
 
 int main(int argc, char* argv[], char** envp) {
@@ -624,12 +622,13 @@ int main(int argc, char* argv[], char** envp) {
     ::_exit(exitCode);
 }
 
-static int mongoDbMain(int argc, char* argv[], char **envp) {
-    static StaticObserver staticObserver;
+static void buildOptionsDescriptions(po::options_description *pVisible,
+                                     po::options_description *pHidden,
+                                     po::positional_options_description *pPositional) {
 
-    mongo::runGlobalInitializersOrDie(argc, argv, envp);
-
-    getcurns = ourgetns;
+    po::options_description& visible_options = *pVisible;
+    po::options_description& hidden_options = *pHidden;
+    po::positional_options_description& positional_options = *pPositional;
 
     po::options_description general_options("General options");
 #if defined(_WIN32)
@@ -639,11 +638,7 @@ static int mongoDbMain(int argc, char* argv[], char **envp) {
     po::options_description ms_options("Master/slave options");
     po::options_description rs_options("Replica set options");
     po::options_description sharding_options("Sharding options");
-    po::options_description visible_options("Allowed options");
-    po::options_description hidden_options("Hidden options");
     po::options_description ssl_options("SSL options");
-
-    po::positional_options_description positional_options;
 
     CmdLine::addGlobalOptions( general_options , hidden_options , ssl_options );
 
@@ -742,7 +737,13 @@ static int mongoDbMain(int argc, char* argv[], char **envp) {
     visible_options.add(ssl_options);
 #endif
     Module::addOptions( visible_options );
+}
 
+static int mongoDbMain(int argc, char* argv[], char **envp) {
+    static StaticObserver staticObserver;
+
+    getcurns = ourgetns;
+    mongo::runGlobalInitializersOrDie(argc, argv, envp);
 
     setupCoreSignals();
     setupSignals( false );
@@ -750,11 +751,6 @@ static int mongoDbMain(int argc, char* argv[], char **envp) {
     dbExecCommand = argv[0];
 
     srand(curTimeMicros());
-#if( BOOST_VERSION >= 104500 )
-    boost::filesystem::path::default_name_check( boost::filesystem2::no_check );
-#else
-    boost::filesystem::path::default_name_check( boost::filesystem::no_check );
-#endif
 
     {
         unsigned x = 0x12345678;
@@ -768,28 +764,36 @@ static int mongoDbMain(int argc, char* argv[], char **envp) {
     if( argc == 1 )
         cout << dbExecCommand << " --help for help and startup options" << endl;
 
+    po::options_description visible_options("Allowed options");
+    po::options_description hidden_options("Hidden options");
+    po::positional_options_description positional_options;
+    buildOptionsDescriptions(&visible_options, &hidden_options, &positional_options);
+
     {
         po::variables_map params;
 
-        string error_message = arg_error_check(argc, argv);
-        if (error_message != "") {
-            cout << error_message << endl << endl;
-            show_help_text(visible_options);
-            return 0;
+        if (!CmdLine::store(std::vector<std::string>(argv, argv + argc),
+                            visible_options,
+                            hidden_options,
+                            positional_options,
+                            params)) {
+            ::_exit(EXIT_FAILURE);
         }
-
-        if ( ! CmdLine::store( argc , argv , visible_options , hidden_options , positional_options , params ) )
-            return 0;
 
         if (params.count("help")) {
             show_help_text(visible_options);
-            return 0;
+            ::_exit(EXIT_SUCCESS);
         }
         if (params.count("version")) {
             cout << mongodVersion() << endl;
             printGitVersion();
-            return 0;
+            ::_exit(EXIT_SUCCESS);
         }
+        if (params.count("sysinfo")) {
+            sysRuntimeInfo();
+            ::_exit(EXIT_SUCCESS);
+        }
+
         if ( params.count( "dbpath" ) ) {
             dbpath = params["dbpath"].as<string>();
             if ( params.count( "fork" ) && dbpath[0] != '/' ) {
@@ -834,7 +838,7 @@ static int mongoDbMain(int argc, char* argv[], char **envp) {
         if( params.count("dur") || params.count( "journal" ) ) {
             if (journalExplicit) {
                 log() << "Can't specify both --journal and --nojournal options." << endl;
-                return EXIT_BADOPTIONS;
+                ::_exit(EXIT_BADOPTIONS);
             }
             journalExplicit = true;
             cmdLine.dur = true;
@@ -901,14 +905,10 @@ static int mongoDbMain(int argc, char* argv[], char **envp) {
             }
             _diaglog.setLevel(x);
         }
-        if (params.count("sysinfo")) {
-            sysRuntimeInfo();
-            return 0;
-        }
         if (params.count("repair")) {
             if (journalExplicit && cmdLine.dur) {
                 log() << "Can't specify both --journal and --repair options." << endl;
-                return EXIT_BADOPTIONS;
+                ::_exit(EXIT_BADOPTIONS);
             }
 
             Record::MemoryTrackingEnabled = false;
@@ -1051,31 +1051,28 @@ static int mongoDbMain(int argc, char* argv[], char **envp) {
         if( repairpath.empty() )
             repairpath = dbpath;
 
-        Module::configAll( params );
-        dataFileSync.go();
-
+        // The "command" option is deprecated.  For backward compatibility, still support the "run"
+        // and "dbppath" command.  The "run" command is the same as just running mongod, so just
+        // falls through.
         if (params.count("command")) {
             vector<string> command = params["command"].as< vector<string> >();
 
-            if (command[0].compare("run") == 0) {
-                if (command.size() > 1) {
-                    cout << "Too many parameters to 'run' command" << endl;
-                    cout << visible_options << endl;
-                    return 0;
-                }
-
-                initAndListen(cmdLine.port);
-                return 0;
-            }
-
             if (command[0].compare("dbpath") == 0) {
                 cout << dbpath << endl;
-                return 0;
+                ::_exit(EXIT_SUCCESS);
             }
 
-            cout << "Invalid command: " << command[0] << endl;
-            cout << visible_options << endl;
-            return 0;
+            if (command[0].compare("run") != 0) {
+                cout << "Invalid command: " << command[0] << endl;
+                cout << visible_options << endl;
+                ::_exit(EXIT_FAILURE);
+            }
+
+            if (command.size() > 1) {
+                cout << "Too many parameters to 'run' command" << endl;
+                cout << visible_options << endl;
+                ::_exit(EXIT_FAILURE);
+            }
         }
 
         if( cmdLine.pretouch )
@@ -1085,7 +1082,7 @@ static int mongoDbMain(int argc, char* argv[], char **envp) {
         if (params.count("shutdown")){
             bool failed = false;
 
-            string name = ( boost::filesystem::path( dbpath ) / "mongod.lock" ).native_file_string();
+            string name = ( boost::filesystem::path( dbpath ) / "mongod.lock" ).string();
             if ( !boost::filesystem::exists( name ) || boost::filesystem::file_size( name ) == 0 )
                 failed = true;
 
@@ -1107,7 +1104,7 @@ static int mongoDbMain(int argc, char* argv[], char **envp) {
 
             if (failed) {
                 cerr << "There doesn't seem to be a server running with dbpath: " << dbpath << endl;
-                ::_exit(-1);
+                ::_exit(EXIT_FAILURE);
             }
 
             cout << "killing process with pid: " << pid << endl;
@@ -1115,16 +1112,25 @@ static int mongoDbMain(int argc, char* argv[], char **envp) {
             if (ret) {
                 int e = errno;
                 cerr << "failed to kill process: " << errnoWithDescription(e) << endl;
-                ::_exit(-1);
+                ::_exit(EXIT_FAILURE);
             }
 
             while (boost::filesystem::exists(procPath)) {
                 sleepsecs(1);
             }
 
-            ::_exit(0);
+            ::_exit(EXIT_SUCCESS);
         }
 #endif
+
+        CmdLine::censor(argc, argv);
+
+        if (!initializeServerGlobalState())
+            ::_exit(EXIT_FAILURE);
+
+        Module::configAll( params );
+
+        dataFileSync.go();
 
 #if defined(_WIN32)
         vector<string> disallowedOptions;
@@ -1144,6 +1150,9 @@ static int mongoDbMain(int argc, char* argv[], char **envp) {
             log() << endl;
         }
 
+        if (params.count("enableFaultInjection")) {
+            enableFailPointCmd();
+        }
     }
 
     StartupTest::runTests();
@@ -1385,14 +1394,11 @@ namespace mongo {
         printWindowsStackTrace( *excPointers->ContextRecord );
         doMinidump(excPointers);
 
-        // In release builds, let dbexit() try to shut down cleanly
-#if !defined(_DEBUG)
-        dbexit( EXIT_UNCAUGHT, "unhandled exception" );
-#endif
+        // Don't go through normal shutdown procedure. It may make things worse.
+        log() << "*** immediate exit due to unhandled exception" << endl;
+        ::_exit(EXIT_ABRUPT);
 
-        // In debug builds, give debugger a chance to run
-        if( filtLast )
-            return filtLast( excPointers );
+        // We won't reach here
         return EXCEPTION_EXECUTE_HANDLER;
     }
 

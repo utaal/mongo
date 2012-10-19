@@ -14,6 +14,7 @@ Import("installSetup")
 Import("darwin windows solaris linux nix")
 
 env.SConscript(['base/SConscript',
+                'db/auth/SConscript',
                 'platform/SConscript',
                 'unittest/SConscript'])
 
@@ -33,6 +34,7 @@ env.StaticLibrary('foundation',
                     ],
                   LIBDEPS=['stacktrace',
                            '$BUILD_DIR/mongo/base/base',
+                           '$BUILD_DIR/mongo/platform/platform',
                            '$BUILD_DIR/third_party/shim_allocator',
                            '$BUILD_DIR/third_party/shim_boost'])
 
@@ -58,6 +60,12 @@ env.CppUnitTest('safe_num_test', ['util/safe_num_test.cpp'],
                 LIBDEPS=['bson'])
 
 env.CppUnitTest('bson_field_test', ['bson/bson_field_test.cpp'],
+                LIBDEPS=['bson'])
+
+env.CppUnitTest('bson_validate_test', ['bson/bson_validate_test.cpp'],
+                LIBDEPS=['bson'])
+
+env.CppUnitTest('namespacestring_test', ['db/namespacestring_test.cpp'],
                 LIBDEPS=['bson'])
 
 commonFiles = [ "pch.cpp",
@@ -99,12 +107,18 @@ commonFiles = [ "pch.cpp",
                 "client/distlock.cpp",
                 ]
 
+env.StaticLibrary("fail_point",
+                  ["util/fail_point.cpp",
+                   "util/fail_point_registry.cpp"],
+                  LIBDEPS=["foundation", "bson"])
+
 env.StaticLibrary('mongocommon', commonFiles,
                   LIBDEPS=['bson',
                            'foundation',
                            'md5',
                            'stacktrace',
                            'stringutils',
+                           'fail_point',
                            '$BUILD_DIR/third_party/pcrecpp',
                            '$BUILD_DIR/third_party/murmurhash3/murmurhash3',
                            '$BUILD_DIR/third_party/shim_boost'],)
@@ -114,9 +128,11 @@ env.StaticLibrary("coredb", [
         "db/commands.cpp",
         "db/commands/hashcmd.cpp",
         "db/commands/isself.cpp",
+        "db/fail_point_service.cpp",
         "db/pipeline/pipeline.cpp",
         "db/dbcommands_generic.cpp",
         "db/dbwebserver.cpp",
+        "db/keypattern.cpp",
         "db/matcher.cpp",
         "db/pipeline/accumulator.cpp",
         "db/pipeline/accumulator_add_to_set.cpp",
@@ -224,6 +240,7 @@ if has_option( "asio" ):
 
 # mongod files - also files used in tools. present in dbtests, but not in mongos and not in client libs.
 serverOnlyFiles = [ "db/curop.cpp",
+                    "db/kill_current_op.cpp",
                     "db/memconcept.cpp",
                     "db/interrupt_status_mongod.cpp",
                     "db/d_globals.cpp",
@@ -310,7 +327,8 @@ serverOnlyFiles = [ "db/curop.cpp",
                     "db/pipeline/document_source_cursor.cpp",
                     "db/driverHelpers.cpp" ]
 
-env.Library( "dbcmdline", "db/cmdline.cpp" )
+env.Library( "dbcmdline", "db/cmdline.cpp", LIBDEPS=['bson'] )
+env.CppUnitTest('cmdline_test', 'db/cmdline_test.cpp', LIBDEPS=['dbcmdline'])
 
 env.Library('stacktrace', 'util/stacktrace.cpp')
 
@@ -354,6 +372,10 @@ env.CppUnitTest( "balancer_policy_test" , [ "s/balancer_policy_tests.cpp" ] ,
                  LIBDEPS=["mongoscore", "coreshard","mongocommon","coreserver","coredb","dbcmdline","mongodandmongos"] ,
                  NO_CRUTCH=True)
 
+# Should only need stuff from util, unittest and platform
+env.CppUnitTest("fail_point_test", [ "util/fail_point_test.cpp" ],
+                LIBDEPS=["fail_point"])
+
 serverOnlyFiles += [ "s/d_logic.cpp",
                      "s/d_writeback.cpp",
                      "s/d_migrate.cpp",
@@ -375,6 +397,7 @@ env.StaticLibrary("serveronly", serverOnlyFiles,
 # These files go into mongos and mongod only, not into the shell or any tools.
 mongodAndMongosFiles = [
     "db/connection_factory.cpp",
+    "db/initialize_server_global_state.cpp",
     "util/net/message_server_port.cpp",
     ]
 env.StaticLibrary("mongodandmongos", mongodAndMongosFiles)
@@ -409,8 +432,13 @@ env.StaticLibrary("coreserver", coreServerFiles, LIBDEPS=["mongocommon", "script
 # main db target
 mongod = env.Install(
     '#/', env.Program( "mongod", mongodOnlyFiles,
-                       LIBDEPS=["coreserver", "serveronly", "coredb", "ntservice",
-                                "mongodandmongos"] + modules ) )
+                       LIBDEPS=["coredb",
+                                "coreserver",
+                                "db/auth/auth",
+                                "mongodandmongos",
+                                "ntservice",
+                                "serveronly",
+                                ] + modules ) )
 Default( mongod )
 
 # tools
@@ -440,7 +468,7 @@ env.Install( '#/', [
 mongos = env.Program(
     "mongos", [ "s/server.cpp"] ,
     LIBDEPS=["mongoscore", "coreserver", "coredb", "mongocommon", "coreshard", "dbcmdline", "ntservice",
-             "mongodandmongos"])
+             "mongodandmongos", "db/auth/auth"])
 env.Install( '#/', mongos )
 
 env.Library("clientandshell", ["client/clientAndShell.cpp"], LIBDEPS=["mongocommon", "defaultversion", "gridfs", "notmongodormongos"])
@@ -451,8 +479,14 @@ if has_option( "sharedclient" ):
 
 # dbtests test binary
 env.StaticLibrary('testframework', ['dbtests/framework.cpp'], LIBDEPS=['unittest/unittest'])
-env.StaticLibrary('mocklib', [f for f in Glob( "dbtests/mock/*.cpp" )],
-  LIBDEPS=['unittest/unittest', 'mongocommon'])
+env.StaticLibrary('mocklib', [
+        'dbtests/mock/mock_dbclient_connection.cpp',
+        'dbtests/mock/mock_remote_db_server.cpp',
+        'dbtests/mock/mock_replica_set.cpp'
+    ],
+    LIBDEPS=['unittest/unittest', 'mongocommon'])
+
+
 
 test = testEnv.Install(
     '#/',
@@ -576,7 +610,9 @@ env.Alias( "core", [ '#/%s' % b for b in [ add_exe( "mongo" ), add_exe( "mongod"
 
 #headers
 if installSetup.headers:
-    for id in [ "", "util/", "util/net/", "util/mongoutils/", "util/concurrency/", "db/", "db/stats/", "db/repl/", "db/ops/", "client/", "bson/", "bson/util/", "s/", "scripting/" ]:
+    for id in [ "", "util/", "util/net/", "util/mongoutils/", "util/concurrency/", "db/",
+                "db/stats/", "db/repl/", "db/ops/", "client/", "bson/", "bson/util/", "s/",
+                "scripting/", "base/", "platform/" ]:
         env.Install( "$INSTALL_DIR/include/" + id, Glob( id + "*.h" ) )
         env.Install( "$INSTALL_DIR/include/" + id, Glob( id + "*.hpp" ) )
 
