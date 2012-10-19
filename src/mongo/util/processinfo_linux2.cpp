@@ -470,7 +470,7 @@ namespace mongo {
             pageSize = sysconf(_SC_PAGESIZE);
         }
         start = start - ((unsigned long long) start % pageSize);
-        scoped_array<char> vec(new char[numPages]);
+        scoped_array<unsigned char> vec(new unsigned char[numPages]);
         if (mincore(start, numPages * pageSize, vec.get())) {
             log() << "mincore failed: " << errnoWithDescription() << endl;
             return false;
