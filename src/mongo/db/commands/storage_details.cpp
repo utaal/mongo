@@ -628,8 +628,6 @@ namespace {
         params.numberOfChunks = ceilingDiv(params.length, params.granularity);
         params.lastChunkLength = params.length -
                 (params.granularity * (params.numberOfChunks - 1));
-        dlog(LL_DEBUG) << "this extent or part of extent (" << params.length << " bytes)"
-                       << " will be split in " << params.numberOfChunks << " chunks" << endl;
         bool success = false;
         switch (subCommand) {
             case SUBCMD_DISK_STORAGE:
