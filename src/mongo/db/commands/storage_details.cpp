@@ -220,11 +220,6 @@ namespace {
             ChunkInfo* operator->() {
                 verify(!end());
                 if (!_valid) {
-                    //TODO(andrea.lattuada) remove DEV block
-                    DEV { // defensive, see verify at end of function
-                        _curChunk.sizeHere = -1;
-                        _curChunk.ratioHere = -1;
-                    }
                     if (_curChunk.chunkNum == _pos.firstChunkNum) {
                         _curChunk.sizeHere = _pos.sizeInFirstChunk;
                         _curChunk.ratioHere = _pos.inFirstChunkRatio;
@@ -365,8 +360,7 @@ namespace {
         bool spansRequestedArea = false;
         for (RecPos::ChunkIterator it = pos.iterateChunks(); !it.end(); ++it) {
 
-            //TODO(andrea.lattuada) use operator[] when this is tested
-            DiskStorageData& chunk = chunkData.at(it->chunkNum);
+            DiskStorageData& chunk = chunkData[it->chunkNum];
             chunk.freeRecords.at(bucketNum) += it->ratioHere;
             spansRequestedArea = true;
         }
