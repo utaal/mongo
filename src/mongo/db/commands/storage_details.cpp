@@ -236,7 +236,9 @@ namespace {
          *       freeRecsPerBucket: [ ... ],
          * The nth element in the freeRecsPerBucket array is the count of deleted records in the
          * nth bucket of the deletedList.
-         * The characteristic field is specified in params.characteristicField.
+         * The characteristic field dotted path is specified in params.characteristicField.
+         * If its value is an OID or Date, the timestamp (as seconds since epoch) will be extracted;
+         * numeric values are converted to double and other bson types are ignored.
          *
          * The list of chunks follows, with similar information aggregated per-chunk:
          *       chunks: [
@@ -549,19 +551,19 @@ namespace {
         if (elem.eoo()) {
             return false;
         }
+        bool hasValue = false;
         if (elem.type() == jstOID) {
             value = double(elem.OID().asTimeT());
         }
         else if (elem.isNumber()) {
             value = elem.numberDouble();
+            hasValue = true;
         }
         else if (elem.type() == mongo::Date) {
             value = double(elem.date().toTimeT());
+            hasValue = true;
         }
-        else {
-            return false;
-        }
-        return true;
+        return hasValue;
     }
 
     const Extent* StorageDetailsCmd::getNthExtent(int extentNum,
@@ -691,17 +693,21 @@ namespace {
             return false;
         }
 
+        const Extent* extent = NULL;
+
         // { extent: num }
         BSONElement extentElm = cmdObj["extent"];
-        if (!extentElm.isNumber()) {
-            errmsg = "no extent specified, use {extent: extentNum}";
-            return false;
-        }
-        int extentNum = extentElm.Number();
-        const Extent* extent = getNthExtent(extentNum, nsd);
-        if (extent == NULL) {
-            errmsg = str::stream() << "extent " << extentNum << " does not exist";
-            return false;
+        if (extentElm.ok()) {
+            if (!extentElm.isNumber()) {
+                errmsg = "extent number must be a number, e.g. {..., extent: 3, ...}";
+                return false;
+            }
+            int extentNum = extentElm.Number();
+            extent = getNthExtent(extentNum, nsd);
+            if (extent == NULL) {
+                errmsg = str::stream() << "extent " << extentNum << " does not exist";
+                return false;
+            }
         }
 
         AnalyzeParams params;
@@ -724,7 +730,10 @@ namespace {
             return false;
         }
 
-        params.characteristicField = cmdObj["characteristicField"].valuestrsafe();
+        BSONElement characteristicFieldElm = cmdObj["characteristicField"];
+        if (characteristicFieldElm.ok()) {
+            params.characteristicField = characteristicFieldElm.valuestrsafe();
+        }
 
         params.showRecords = cmdObj["showRecords"].trueValue();
 
