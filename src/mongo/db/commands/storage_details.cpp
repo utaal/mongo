@@ -67,14 +67,13 @@ namespace {
         int numberOfChunks;
         int granularity;
         int lastChunkLength;
-        string charactField;
-        bool charactFieldIsObjId;
+        string characteristicField;
         bool showRecords;
         time_t startTime;
 
         AnalyzeParams() : startOfs(0), endOfs(INT_MAX), length(INT_MAX), numberOfChunks(0),
-                          granularity(0), lastChunkLength(0), charactField("_id"),
-                          charactFieldIsObjId(true), showRecords(false), startTime(time(NULL)) {
+                          granularity(0), lastChunkLength(0), characteristicField("_id"),
+                          showRecords(false), startTime(time(NULL)) {
         }
     };
 
@@ -82,17 +81,17 @@ namespace {
      * Aggregated information per chunk / extent.
      */
     struct DiskStorageData {
-        long double numEntries;
+        double numEntries;
         long long bsonBytes;
         long long recBytes;
         long long onDiskBytes;
-        double charactSum;
-        long double charactCount;
+        double characteristicSum;
+        double characteristicCount;
         vector<double> freeRecords;
 
         DiskStorageData(long long diskBytes) : numEntries(0), bsonBytes(0), recBytes(0),
-                                               onDiskBytes(diskBytes), charactSum(0),
-                                               charactCount(0), freeRecords(mongo::Buckets, 0) {
+                                               onDiskBytes(diskBytes), characteristicSum(0),
+                                               characteristicCount(0), freeRecords(mongo::Buckets, 0) {
         }
 
         const DiskStorageData& operator += (const DiskStorageData& rhs);
@@ -162,7 +161,7 @@ namespace {
          */
         class ChunkIterator {
         public:
-            ChunkIterator(RecPos& pos) : _pos(pos), _fresh(false) {
+            ChunkIterator(RecPos& pos) : _pos(pos), _valid(false) {
                 _curChunk.chunkNum = pos.firstChunkNum >= 0 ? _pos.firstChunkNum : 0;
             }
 
@@ -177,9 +176,9 @@ namespace {
             RecPos& _pos;
             ChunkInfo _curChunk;
 
-            // if _fresh, data in _curChunk refers to the current chunk, otherwise it needs
+            // if _valid, data in _curChunk refers to the current chunk, otherwise it needs
             // to be computed
-            bool _fresh;
+            bool _valid;
         };
 
         ChunkIterator iterateChunks();
@@ -232,14 +231,12 @@ namespace {
          *       bsonBytes: <total size of the bson objects>,
          *       recBytes: <total size of the valid records>,
          *       onDiskBytes: <length of the extent or range>,
-         * (opt) charactCount: <number of records containing the field used to characterize them>
-         * (opt) charactSum: <sum of the values of the characteristic field>
-         *       charactAvg: <average value of the characteristic field>
+         * (opt) characteristicCount: <number of records containing the field used to tell them apart>
+         *       characteristicAvg: <average value of the characteristic field>
          *       freeRecsPerBucket: [ ... ],
          * The nth element in the freeRecsPerBucket array is the count of deleted records in the
          * nth bucket of the deletedList.
-         * The characteristic field is specified in params.charactField and may or may not be
-         * a standard object id (params.charactFieldIsObjId).
+         * The characteristic field is specified in params.characteristicField.
          *
          * The list of chunks follows, with similar information aggregated per-chunk:
          *       chunks: [
@@ -256,7 +253,7 @@ namespace {
          *           { ofs: <record offset from start of extent>,
          *             recBytes: <record size>,
          *             bsonBytes: <bson document size>,
-         *  (optional) charact: <value of the characteristic field>
+         *  (optional) characteristic: <value of the characteristic field>
          *           }, 
          *           ... (one element per record)
          *       ],
@@ -291,17 +288,13 @@ namespace {
                                      string& errmsg, BSONObjBuilder& result);
 
         /**
-         * Extracts the characteristic field from the document, if present and of the right type.
-         * If charactFieldIsObjId is true the field has to have type ObjectId, otherwise it must be
-         * any kind of numeric type.
+         * Extracts the characteristic field from the document, if present and of the type ObjectId,
+         * Date or numeric.
          * @param obj the document
-         * @param charactField dotted path to the characteristic field inside the document
-         * @param charactFieldIsObjId if true, the charact. field is assumed to be a standard
-         *                            object id
          * @param value out: characteristic field value, only valid if true is returned
          * @return true if field was correctly extracted, false otherwise (missing or of wrong type)
          */
-        static bool extractCharactFieldValue(BSONObj& obj, const AnalyzeParams& params,
+        static bool extractCharacteristicFieldValue(BSONObj& obj, const AnalyzeParams& params,
                                              double& value);
 
         /**
@@ -340,8 +333,8 @@ namespace {
         this->recBytes += rhs.recBytes;
         this->bsonBytes += rhs.bsonBytes;
         this->onDiskBytes += rhs.onDiskBytes;
-        this->charactSum += rhs.charactSum;
-        this->charactCount += rhs.charactCount;
+        this->characteristicSum += rhs.characteristicSum;
+        this->characteristicCount += rhs.characteristicCount;
         verify(freeRecords.size() == rhs.freeRecords.size());
         vector<double>::const_iterator rhsit = rhs.freeRecords.begin();
         for (vector<double>::iterator thisit = this->freeRecords.begin();
@@ -352,13 +345,13 @@ namespace {
     }
 
     void DiskStorageData::appendToBSONObjBuilder(BSONObjBuilder& b, bool includeFreeRecords) const {
-        b.append("numEntries", double(numEntries));
+        b.append("numEntries", numEntries);
         b.append("bsonBytes", bsonBytes);
         b.append("recBytes", recBytes);
         b.append("onDiskBytes", onDiskBytes);
-        if (charactCount > 0) {
-            b.append("charactSum", charactSum);
-            b.append("charactCount", (double) charactCount);
+        if (characteristicCount > 0) {
+            b.append("characteristicCount", characteristicCount);
+            b.append("characteristicAvg", characteristicSum / characteristicCount);
         }
         if (includeFreeRecords) {
             b.append("freeRecsPerBucket", freeRecords);
@@ -413,7 +406,7 @@ namespace {
 
     RecPos::ChunkInfo* RecPos::ChunkIterator::operator->() {
         verify(!end());
-        if (!_fresh) {
+        if (!_valid) {
             //TODO(andrea.lattuada) remove DEV block
             DEV { // defensive, see verify at end of function
                 _curChunk.sizeHere = -1;
@@ -434,14 +427,14 @@ namespace {
                 _curChunk.ratioHere = _pos.inMiddleChunkRatio;
             }
             verify(_curChunk.sizeHere >= 0 && _curChunk.ratioHere >= 0);
-            _fresh = true;
+            _valid = true;
         }
         return &_curChunk;
     }
 
     RecPos::ChunkIterator& RecPos::ChunkIterator::operator++() {
         _curChunk.chunkNum++;
-        _fresh = false;
+        _valid = false;
         return *this;
     }
 
@@ -550,23 +543,25 @@ namespace {
         return true;
     }
 
-    bool StorageDetailsCmd::extractCharactFieldValue(BSONObj& obj, const AnalyzeParams& params,
+    bool StorageDetailsCmd::extractCharacteristicFieldValue(BSONObj& obj, const AnalyzeParams& params,
                                                      double& value) {
-        BSONElement elem = obj.getFieldDotted(params.charactField);
+        BSONElement elem = obj.getFieldDotted(params.characteristicField);
         if (elem.eoo()) {
             return false;
         }
-        bool hasval = false;
-        if (params.charactFieldIsObjId) {
-            OID oid = elem.OID();
-            value = params.startTime - oid.asTimeT();
-            hasval = true;
+        if (elem.type() == jstOID) {
+            value = double(elem.OID().asTimeT());
         }
         else if (elem.isNumber()) {
             value = elem.numberDouble();
-            hasval = true;
         }
-        return hasval;
+        else if (elem.type() == mongo::Date) {
+            value = double(elem.date().toTimeT());
+        }
+        else {
+            return false;
+        }
+        return true;
     }
 
     const Extent* StorageDetailsCmd::getNthExtent(int extentNum,
@@ -623,8 +618,9 @@ namespace {
 
         BSONObj obj = dl.obj();
         int recBytes = r->lengthWithHeaders();
-        double charactFieldValue;
-        bool hasCharactField = extractCharactFieldValue(obj, params, charactFieldValue);
+        double characteristicFieldValue;
+        bool hasCharacteristicField = extractCharacteristicFieldValue(obj, params,
+                                                                      characteristicFieldValue);
 
         RecPos pos = RecPos::from(dl.getOfs(), recBytes, extentOfs, params);
         bool spansRequestedArea = false;
@@ -634,9 +630,9 @@ namespace {
             chunk.numEntries += it->ratioHere;
             chunk.recBytes += it->sizeHere;
             chunk.bsonBytes += it->ratioHere * obj.objsize();
-            if (hasCharactField) {
-                chunk.charactCount += it->ratioHere;
-                chunk.charactSum += it->ratioHere * charactFieldValue;
+            if (hasCharacteristicField) {
+                chunk.characteristicCount += it->ratioHere;
+                chunk.characteristicSum += it->ratioHere * characteristicFieldValue;
             }
         }
 
@@ -653,11 +649,13 @@ namespace {
             recordBuilder.append("recBytes", recBytes);
             recordBuilder.append("bsonBytes", obj.objsize());
             recordBuilder.append("_id", obj["_id"]);
-            if (hasCharactField) {
-                recordBuilder.append("charact", charactFieldValue);
+            if (hasCharacteristicField) {
+                recordBuilder.append("characteristic", characteristicFieldValue);
             }
         }
     }
+
+    static const char* USE_ANALYZE_STR = "use {analyze: 'diskStorage' | 'memInCore'}";
 
     bool StorageDetailsCmd::run(const string& dbname , BSONObj& cmdObj, int, string& errmsg,
                                 BSONObjBuilder& result, bool fromRepl) {
@@ -665,25 +663,26 @@ namespace {
         // { analyze: subcommand }
         BSONElement analyzeElm = cmdObj["analyze"];
         if (analyzeElm.eoo()) {
-            errmsg = "no subcommand specified, use {analyze: 'diskStorage' | 'memInCore'}";
+            errmsg = str::stream() << "no subcommand specified, " << USE_ANALYZE_STR;
             return false;
         }
-        string subCommandStr = analyzeElm.String();
+
+        const char* subCommandStr = analyzeElm.valuestrsafe();
         SubCommand subCommand;
-        if (!subCommandStr.compare("diskStorage")) {
+        if (str::equals(subCommandStr, "diskStorage")) {
             subCommand = SUBCMD_DISK_STORAGE;
         }
-        else if (!subCommandStr.compare("memInCore")) {
+        else if (str::equals(subCommandStr, "memInCore")) {
             subCommand = SUBCMD_MEM_IN_CORE;
         }
         else {
             errmsg = str::stream() << subCommandStr << " is not a valid subcommand, "
-                                   << "use 'diskStorage' or 'memInCore'";
+                                                    << USE_ANALYZE_STR;
             return false;
         }
 
         const string ns = dbname + "." + cmdObj.firstElement().valuestrsafe();
-        NamespaceDetails * nsd = nsdetails(ns.c_str());
+        const NamespaceDetails* nsd = nsdetails(ns.c_str());
         if (!cmdLine.quiet) {
             tlog() << "CMD: storageDetails " << ns << ", analyze " << subCommandStr << endl;
         }
@@ -694,7 +693,7 @@ namespace {
 
         // { extent: num }
         BSONElement extentElm = cmdObj["extent"];
-        if (extentElm.eoo() || !extentElm.isNumber()) {
+        if (!extentElm.isNumber()) {
             errmsg = "no extent specified, use {extent: extentNum}";
             return false;
         }
@@ -725,15 +724,7 @@ namespace {
             return false;
         }
 
-        BSONElement charactFieldElm = cmdObj["charactField"];
-        if (charactFieldElm.ok()) {
-            params.charactField = charactFieldElm["name"].String();
-            params.charactFieldIsObjId = false;
-            BSONElement isStdObjIdElm = charactFieldElm["isStdObjId"];
-            if (!isStdObjIdElm.eoo()) {
-                params.charactFieldIsObjId = isStdObjIdElm.Bool();
-            }
-        }
+        params.characteristicField = cmdObj["characteristicField"].valuestrsafe();
 
         params.showRecords = cmdObj["showRecords"].trueValue();
 
