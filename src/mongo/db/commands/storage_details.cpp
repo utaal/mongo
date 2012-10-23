@@ -43,7 +43,7 @@ namespace {
      */
     enum SubCommand {
         SUBCMD_DISK_STORAGE,
-        SUBCMD_MEM_IN_CORE
+        SUBCMD_PAGES_IN_RAM
     };
 
     /**
@@ -280,8 +280,9 @@ namespace {
         }
 
         virtual void help(stringstream& h) const {
-            h << "Provides detailed and aggreate information regarding record and deleted record "
-              << "layout in storage files and in memory. Slow if run with {allExtents: true}.";
+            h << "Provides detailed and aggregate information regarding record and deleted record "
+              << "layout in storage files and in memory. Slow if run on large collections. "
+              << "Specify {extent: num_} to restrict processing to a single extent.";
         }
 
         virtual LockType locktype() const { return READ; }
@@ -534,6 +535,7 @@ namespace {
                 it->appendToBSONObjBuilder(chunkBuilder, !isCapped);
                 chunkArrayBuilder.append(chunkBuilder.obj());
             }
+            chunkArrayBuilder.done();
         }
         extentData.appendToBSONObjBuilder(result, !isCapped);
         return true;
@@ -553,7 +555,7 @@ namespace {
      *
      * @return true on success, false on failure (partial output may still be present)
      */
-    bool analyzeMemInCore(const Extent* ex, const AnalyzeParams& params, string& errmsg,
+    bool analyzePagesInRAM(const Extent* ex, const AnalyzeParams& params, string& errmsg,
                           BSONObjBuilder& result) {
 
         verify(sizeof(char) == 1);
@@ -617,8 +619,8 @@ namespace {
             case SUBCMD_DISK_STORAGE:
                 success = analyzeDiskStorage(nsd, ex, params, errmsg, outputBuilder);
                 break;
-            case SUBCMD_MEM_IN_CORE:
-                success = analyzeMemInCore(ex, params, errmsg, outputBuilder);
+            case SUBCMD_PAGES_IN_RAM:
+                success = analyzePagesInRAM(ex, params, errmsg, outputBuilder);
                 break;
         }
         return success;
@@ -673,7 +675,7 @@ namespace {
         return true;
     }
 
-    static const char* USE_ANALYZE_STR = "use {analyze: 'diskStorage' | 'memInCore'}";
+    static const char* USE_ANALYZE_STR = "use {analyze: 'diskStorage' | 'pagesInRAM'}";
 
     bool StorageDetailsCmd::run(const string& dbname, BSONObj& cmdObj, int, string& errmsg,
                                 BSONObjBuilder& result, bool fromRepl) {
@@ -690,8 +692,8 @@ namespace {
         if (str::equals(subCommandStr, "diskStorage")) {
             subCommand = SUBCMD_DISK_STORAGE;
         }
-        else if (str::equals(subCommandStr, "memInCore")) {
-            subCommand = SUBCMD_MEM_IN_CORE;
+        else if (str::equals(subCommandStr, "pagesInRAM")) {
+            subCommand = SUBCMD_PAGES_IN_RAM;
         }
         else {
             errmsg = str::stream() << subCommandStr << " is not a valid subcommand, "
@@ -736,15 +738,32 @@ namespace {
                          "use {..., extent: _num, range: [_a, _b], ...}";
                 return false;
             }
+            if (!(rangeElm.type() == mongo::Array
+               && rangeElm["0"].isNumber()
+               && rangeElm["1"].isNumber()
+               && rangeElm["2"].eoo())) {
+                errmsg = "range must be an array with exactly two numeric elements";
+                return false;
+            }
             params.startOfs = rangeElm["0"].Number();
             params.endOfs = rangeElm["1"].Number();
         }
 
         // { granularity: bytes }
-        params.granularity = cmdObj["granularity"].number();
+        BSONElement granularityElm = cmdObj["granularity"];
+        if (granularityElm.ok() && !granularityElm.isNumber()) {
+            errmsg = "granularity must be a number";
+            return false;
+        }
+        params.granularity = granularityElm.number();
 
         // { numberOfChunks: bytes }
-        params.numberOfChunks = cmdObj["numberOfChunks"].number();
+        BSONElement numberOfChunksElm = cmdObj["numberOfChunks"];
+        if (numberOfChunksElm.ok() && !numberOfChunksElm.isNumber()) {
+            errmsg = "numberOfChunks must be a number";
+            return false;
+        }
+        params.numberOfChunks = numberOfChunksElm.number();
 
         if (params.granularity == 0 && params.numberOfChunks == 0) {
             errmsg = "either granularity or numberOfChunks must be specified in options";
@@ -758,7 +777,12 @@ namespace {
 
         params.showRecords = cmdObj["showRecords"].trueValue();
 
-        return runInternal(nsd, extent, subCommand, params, errmsg, result);
+        try {
+            return runInternal(nsd, extent, subCommand, params, errmsg, result);
+        } catch (const DBException& e) {
+            errmsg = str::stream() << "unexpected error: code " << e.getCode();
+            return false;
+        }
     }
 
 }  // namespace
