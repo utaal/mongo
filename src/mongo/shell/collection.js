@@ -61,7 +61,7 @@ DBCollection.prototype.help = function () {
     print("\tdb." + shortName + ".stats()");
     print("\tdb." + shortName + ".storageDetails({analyze: ..., [extent: <num>], granularity: <bytes>})");
     print("\tdb." + shortName + ".storageDetails({analyze: 'diskStorage', ...}) - analyze record layout on disk)");
-    print("\tdb." + shortName + ".storageDetails({analyze: 'memInCore', ...}) - analyze resident memory pages");
+    print("\tdb." + shortName + ".storageDetails({analyze: 'pagesInRAM', ...}) - analyze resident memory pages");
     print("\tdb." + shortName + ".storageSize() - includes free space allocated to this collection");
     print("\tdb." + shortName + ".totalIndexSize() - size in bytes of all the indexes");
     print("\tdb." + shortName + ".totalSize() - storage allocated for all data and indexes");

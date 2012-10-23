@@ -43,7 +43,7 @@ namespace {
      */
     enum SubCommand {
         SUBCMD_DISK_STORAGE,
-        SUBCMD_MEM_IN_CORE
+        SUBCMD_PAGES_IN_RAM
     };
 
     /**
@@ -555,7 +555,7 @@ namespace {
      *
      * @return true on success, false on failure (partial output may still be present)
      */
-    bool analyzeMemInCore(const Extent* ex, const AnalyzeParams& params, string& errmsg,
+    bool analyzePagesInRAM(const Extent* ex, const AnalyzeParams& params, string& errmsg,
                           BSONObjBuilder& result) {
 
         verify(sizeof(char) == 1);
@@ -619,8 +619,8 @@ namespace {
             case SUBCMD_DISK_STORAGE:
                 success = analyzeDiskStorage(nsd, ex, params, errmsg, outputBuilder);
                 break;
-            case SUBCMD_MEM_IN_CORE:
-                success = analyzeMemInCore(ex, params, errmsg, outputBuilder);
+            case SUBCMD_PAGES_IN_RAM:
+                success = analyzePagesInRAM(ex, params, errmsg, outputBuilder);
                 break;
         }
         return success;
@@ -675,7 +675,7 @@ namespace {
         return true;
     }
 
-    static const char* USE_ANALYZE_STR = "use {analyze: 'diskStorage' | 'memInCore'}";
+    static const char* USE_ANALYZE_STR = "use {analyze: 'diskStorage' | 'pagesInRAM'}";
 
     bool StorageDetailsCmd::run(const string& dbname, BSONObj& cmdObj, int, string& errmsg,
                                 BSONObjBuilder& result, bool fromRepl) {
@@ -692,8 +692,8 @@ namespace {
         if (str::equals(subCommandStr, "diskStorage")) {
             subCommand = SUBCMD_DISK_STORAGE;
         }
-        else if (str::equals(subCommandStr, "memInCore")) {
-            subCommand = SUBCMD_MEM_IN_CORE;
+        else if (str::equals(subCommandStr, "pagesInRAM")) {
+            subCommand = SUBCMD_PAGES_IN_RAM;
         }
         else {
             errmsg = str::stream() << subCommandStr << " is not a valid subcommand, "
