@@ -59,8 +59,10 @@ DBCollection.prototype.help = function () {
     print("\tdb." + shortName + ".runCommand( name , <options> ) runs a db command with the given name where the first param is the collection name");
     print("\tdb." + shortName + ".save(obj)");
     print("\tdb." + shortName + ".stats()");
+    print("\tdb." + shortName + ".storageDetails({analyze: ..., [extent: <num>], granularity: <bytes>})");
+    print("\tdb." + shortName + ".storageDetails({analyze: 'diskStorage', ...}) - analyze record layout on disk)");
+    print("\tdb." + shortName + ".storageDetails({analyze: 'memInCore', ...}) - analyze resident memory pages");
     print("\tdb." + shortName + ".storageSize() - includes free space allocated to this collection");
-    print("\tdb." + shortName + ".storageDetails({analyze: 'diskStorage' | 'memInCore', [extent: <num>], granularity: <bytes>}) - diskStorage: analyze record layout; memInCore: analyze resident memory pages");
     print("\tdb." + shortName + ".totalIndexSize() - size in bytes of all the indexes");
     print("\tdb." + shortName + ".totalSize() - storage allocated for all data and indexes");
     print("\tdb." + shortName + ".update(query, object[, upsert_bool, multi_bool]) - instead of two flags, you can pass an object with fields: upsert, multi");
