@@ -59,9 +59,8 @@ DBCollection.prototype.help = function () {
     print("\tdb." + shortName + ".runCommand( name , <options> ) runs a db command with the given name where the first param is the collection name");
     print("\tdb." + shortName + ".save(obj)");
     print("\tdb." + shortName + ".stats()");
-    print("\tdb." + shortName + ".storageDetails({analyze: ..., [extent: <num>], granularity: <bytes>})");
-    print("\tdb." + shortName + ".storageDetails({analyze: 'diskStorage', ...}) - analyze record layout on disk)");
-    print("\tdb." + shortName + ".storageDetails({analyze: 'pagesInRAM', ...}) - analyze resident memory pages");
+    print("\tdb." + shortName + ".diskStorageStats({[extent: <num>], granularity: <bytes>, ...}) - analyze record layout on disk");
+    print("\tdb." + shortName + ".pagesInRAM({[extent: <num>], granularity: <bytes>, ...}) - analyze resident memory pages");
     print("\tdb." + shortName + ".storageSize() - includes free space allocated to this collection");
     print("\tdb." + shortName + ".totalIndexSize() - size in bytes of all the indexes");
     print("\tdb." + shortName + ".totalSize() - storage allocated for all data and indexes");
@@ -429,14 +428,16 @@ DBCollection.prototype.validate = function(full) {
     return res;
 }
 
-DBCollection.prototype.storageDetails = function(opt) {
-    var cmd = { storageDetails: this.getName() };
+DBCollection.prototype.diskStorageStats = function(opt) {
+    var cmd = { storageDetails: this.getName(), analyze: 'diskStorage' };
+    if (typeof(opt) == 'object') Object.extend(cmd, opt);
+    return this._db.runCommand(cmd);
+}
 
-    if (typeof(opt) == 'object') // support arbitrary options here
-        Object.extend(cmd, opt);
-
-    var result = this._db.runCommand(cmd);
-    return result;
+DBCollection.prototype.pagesInRAM = function(opt) {
+    var cmd = { storageDetails: this.getName(), analyze: 'pagesInRAM' };
+    if (typeof(opt) == 'object') Object.extend(cmd, opt);
+    return this._db.runCommand(cmd);
 }
 
 DBCollection.prototype.getShardVersion = function(){
