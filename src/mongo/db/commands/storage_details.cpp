@@ -78,11 +78,12 @@ namespace {
         long long onDiskBytes;
         double characteristicSum;
         double characteristicCount;
+        double outOfOrderRecs;
         vector<double> freeRecords;
 
         DiskStorageData(long long diskBytes) : numEntries(0), bsonBytes(0), recBytes(0),
                                                onDiskBytes(diskBytes), characteristicSum(0),
-                                               characteristicCount(0),
+                                               characteristicCount(0), outOfOrderRecs(0),
                                                freeRecords(mongo::Buckets, 0) {
         }
 
@@ -93,6 +94,7 @@ namespace {
             this->onDiskBytes += rhs.onDiskBytes;
             this->characteristicSum += rhs.characteristicSum;
             this->characteristicCount += rhs.characteristicCount;
+            this->outOfOrderRecs += rhs.outOfOrderRecs;
             verify(freeRecords.size() == rhs.freeRecords.size());
             vector<double>::const_iterator rhsit = rhs.freeRecords.begin();
             for (vector<double>::iterator thisit = this->freeRecords.begin();
@@ -107,6 +109,7 @@ namespace {
             b.append("bsonBytes", bsonBytes);
             b.append("recBytes", recBytes);
             b.append("onDiskBytes", onDiskBytes);
+            b.append("outOfOrderRecs", outOfOrderRecs);
             if (characteristicCount > 0) {
                 b.append("characteristicCount", characteristicCount);
                 b.append("characteristicAvg", characteristicSum / characteristicCount);
@@ -219,6 +222,22 @@ namespace {
             }
 
             ChunkInfo* operator->() {
+                return get();
+            }
+
+            ChunkInfo& operator*() {
+                return *(get());
+            }
+
+            // preincrement
+            ChunkIterator& operator++() {
+                _curChunk.chunkNum++;
+                _valid = false;
+                return *this;
+            }
+
+        private:
+            ChunkInfo* get() {
                 verify(!end());
                 if (!_valid) {
                     if (_curChunk.chunkNum == _pos.firstChunkNum) {
@@ -241,14 +260,6 @@ namespace {
                 return &_curChunk;
             }
 
-            // preincrement
-            ChunkIterator& operator++() {
-                _curChunk.chunkNum++;
-                _valid = false;
-                return *this;
-            }
-
-        private:
             RecPos& _pos;
             ChunkInfo _curChunk;
 
@@ -377,7 +388,7 @@ namespace {
     /**
      * analyzeDiskStorage helper which processes a single record.
      */
-    void processRecord(const DiskLoc& dl, const Record* r, int extentOfs,
+    void processRecord(const DiskLoc& dl, const DiskLoc& prevDl, const Record* r, int extentOfs,
                        const AnalyzeParams& params, vector<DiskStorageData>& chunkData,
                        BSONArrayBuilder* recordsArrayBuilder) {
         killCurrentOp.checkForInterrupt();
@@ -387,6 +398,7 @@ namespace {
         double characteristicFieldValue;
         bool hasCharacteristicField = extractCharacteristicFieldValue(obj, params,
                                                                       characteristicFieldValue);
+        bool isLocatedBeforePrevious = dl.a() < prevDl.a();
 
         RecPos pos = RecPos::from(dl.getOfs(), recBytes, extentOfs, params);
         bool spansRequestedArea = false;
@@ -399,6 +411,9 @@ namespace {
             if (hasCharacteristicField) {
                 chunk.characteristicCount += it->ratioHere;
                 chunk.characteristicSum += it->ratioHere * characteristicFieldValue;
+            }
+            if (isLocatedBeforePrevious) {
+                chunk.outOfOrderRecs += it->ratioHere;
             }
         }
 
@@ -500,9 +515,12 @@ namespace {
                 recordsArrayBuilder.reset(new BSONArrayBuilder(result.subarrayStart("records")));
             }
 
+            DiskLoc prevDl = ex->firstRecord;
             for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) {
                 r = dl.rec();
-                processRecord(dl, r, extentOfs, params, chunkData, recordsArrayBuilder.get());
+                processRecord(dl, prevDl, r, extentOfs, params, chunkData,
+                              recordsArrayBuilder.get());
+                prevDl = dl;
             }
             if (recordsArrayBuilder.get() != NULL) {
                 recordsArrayBuilder->doneFast(); //TODO(andrea.lattuada) can be removed when
