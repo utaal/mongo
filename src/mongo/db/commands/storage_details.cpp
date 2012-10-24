@@ -58,12 +58,13 @@ namespace {
         int granularity;
         int lastChunkLength;
         string characteristicField;
+        bool processDeletedRecords;
         bool showRecords;
         time_t startTime;
 
         AnalyzeParams() : startOfs(0), endOfs(INT_MAX), length(INT_MAX), numberOfChunks(0),
                           granularity(0), lastChunkLength(0), characteristicField("_id"),
-                          showRecords(false), startTime(time(NULL)) {
+                          processDeletedRecords(true), showRecords(false), startTime(time(NULL)) {
         }
     };
 
@@ -77,11 +78,12 @@ namespace {
         long long onDiskBytes;
         double characteristicSum;
         double characteristicCount;
+        double outOfOrderRecs;
         vector<double> freeRecords;
 
         DiskStorageData(long long diskBytes) : numEntries(0), bsonBytes(0), recBytes(0),
                                                onDiskBytes(diskBytes), characteristicSum(0),
-                                               characteristicCount(0),
+                                               characteristicCount(0), outOfOrderRecs(0),
                                                freeRecords(mongo::Buckets, 0) {
         }
 
@@ -92,6 +94,7 @@ namespace {
             this->onDiskBytes += rhs.onDiskBytes;
             this->characteristicSum += rhs.characteristicSum;
             this->characteristicCount += rhs.characteristicCount;
+            this->outOfOrderRecs += rhs.outOfOrderRecs;
             verify(freeRecords.size() == rhs.freeRecords.size());
             vector<double>::const_iterator rhsit = rhs.freeRecords.begin();
             for (vector<double>::iterator thisit = this->freeRecords.begin();
@@ -106,6 +109,7 @@ namespace {
             b.append("bsonBytes", bsonBytes);
             b.append("recBytes", recBytes);
             b.append("onDiskBytes", onDiskBytes);
+            b.append("outOfOrderRecs", outOfOrderRecs);
             if (characteristicCount > 0) {
                 b.append("characteristicCount", characteristicCount);
                 b.append("characteristicAvg", characteristicSum / characteristicCount);
@@ -218,6 +222,22 @@ namespace {
             }
 
             ChunkInfo* operator->() {
+                return get();
+            }
+
+            ChunkInfo& operator*() {
+                return *(get());
+            }
+
+            // preincrement
+            ChunkIterator& operator++() {
+                _curChunk.chunkNum++;
+                _valid = false;
+                return *this;
+            }
+
+        private:
+            ChunkInfo* get() {
                 verify(!end());
                 if (!_valid) {
                     if (_curChunk.chunkNum == _pos.firstChunkNum) {
@@ -240,14 +260,6 @@ namespace {
                 return &_curChunk;
             }
 
-            // preincrement
-            ChunkIterator& operator++() {
-                _curChunk.chunkNum++;
-                _valid = false;
-                return *this;
-            }
-
-        private:
             RecPos& _pos;
             ChunkInfo _curChunk;
 
@@ -376,7 +388,7 @@ namespace {
     /**
      * analyzeDiskStorage helper which processes a single record.
      */
-    void processRecord(const DiskLoc& dl, const Record* r, int extentOfs,
+    void processRecord(const DiskLoc& dl, const DiskLoc& prevDl, const Record* r, int extentOfs,
                        const AnalyzeParams& params, vector<DiskStorageData>& chunkData,
                        BSONArrayBuilder* recordsArrayBuilder) {
         killCurrentOp.checkForInterrupt();
@@ -386,6 +398,7 @@ namespace {
         double characteristicFieldValue;
         bool hasCharacteristicField = extractCharacteristicFieldValue(obj, params,
                                                                       characteristicFieldValue);
+        bool isLocatedBeforePrevious = dl.a() < prevDl.a();
 
         RecPos pos = RecPos::from(dl.getOfs(), recBytes, extentOfs, params);
         bool spansRequestedArea = false;
@@ -398,6 +411,9 @@ namespace {
             if (hasCharacteristicField) {
                 chunk.characteristicCount += it->ratioHere;
                 chunk.characteristicSum += it->ratioHere * characteristicFieldValue;
+            }
+            if (isLocatedBeforePrevious) {
+                chunk.outOfOrderRecs += it->ratioHere;
             }
         }
 
@@ -417,6 +433,8 @@ namespace {
             if (hasCharacteristicField) {
                 recordBuilder.append("characteristic", characteristicFieldValue);
             }
+            recordBuilder.doneFast(); //TODO(andrea.lattuada) can be removed when SERVER-7459
+                                      //                      is fixed
         }
     }
 
@@ -440,6 +458,8 @@ namespace {
      *       onDiskBytes: <length of the extent or range>,
      * (opt) characteristicCount: <number of records containing the field used to tell them apart>
      *       characteristicAvg: <average value of the characteristic field>
+     *       outOfOrderRecs: <number of records that follow - in the record linked list -
+     *                        a record that is located further in the extent>
      *       freeRecsPerBucket: [ ... ],
      * The nth element in the freeRecsPerBucket array is the count of deleted records in the
      * nth bucket of the deletedList.
@@ -466,7 +486,7 @@ namespace {
      *           }, 
      *           ... (one element per record)
      *       ],
-     *       deletedRecords: [
+     *  (optional) deletedRecords: [
      *           { ofs: <offset from start of extent>,
      *             recBytes: <deleted record size>
      *           },
@@ -497,11 +517,20 @@ namespace {
                 recordsArrayBuilder.reset(new BSONArrayBuilder(result.subarrayStart("records")));
             }
 
+            DiskLoc prevDl = ex->firstRecord;
             for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) {
                 r = dl.rec();
-                processRecord(dl, r, extentOfs, params, chunkData, recordsArrayBuilder.get());
+                processRecord(dl, prevDl, r, extentOfs, params, chunkData,
+                              recordsArrayBuilder.get());
+                prevDl = dl;
+            }
+            if (recordsArrayBuilder.get() != NULL) {
+                recordsArrayBuilder->doneFast(); //TODO(andrea.lattuada) can be removed when
+                                                 //                      SERVER-7459 is fixed
             }
         }
+
+        bool processingDeletedRecords = !isCapped && params.processDeletedRecords;
 
         { // ensure done() is called by invoking destructor when done with the builder
             scoped_ptr<BSONArrayBuilder> deletedRecordsArrayBuilder;
@@ -510,7 +539,7 @@ namespace {
                         new BSONArrayBuilder(result.subarrayStart("deletedRecords")));
             }
 
-            if (!isCapped) {
+            if (processingDeletedRecords) {
                 for (int bucketNum = 0; bucketNum < mongo::Buckets; bucketNum++) {
                     DiskLoc dl = nsd->deletedList[bucketNum];
                     while (!dl.isNull()) {
@@ -521,10 +550,14 @@ namespace {
                     }
                 }
             }
+            if (deletedRecordsArrayBuilder.get() != NULL) {
+                deletedRecordsArrayBuilder->doneFast(); //TODO(andrea.lattuada) can be removed when
+                                                        //                      SERVER-7459 is fixed
+            }
         }
 
         DiskStorageData extentData(0);
-        {
+        { // ensure done() is called by invoking destructor when done with the builder
             BSONArrayBuilder chunkArrayBuilder (result.subarrayStart("chunks"));
             for (vector<DiskStorageData>::iterator it = chunkData.begin();
                  it != chunkData.end(); ++it) {
@@ -532,12 +565,12 @@ namespace {
                 killCurrentOp.checkForInterrupt();
                 extentData += *it;
                 BSONObjBuilder chunkBuilder;
-                it->appendToBSONObjBuilder(chunkBuilder, !isCapped);
+                it->appendToBSONObjBuilder(chunkBuilder, processingDeletedRecords);
                 chunkArrayBuilder.append(chunkBuilder.obj());
             }
-            chunkArrayBuilder.done();
-        }
-        extentData.appendToBSONObjBuilder(result, !isCapped);
+            chunkArrayBuilder.doneFast(); //TODO(andrea.lattuada) can be removed when
+        }                                 //                      SERVER-7459 is fixed
+        extentData.appendToBSONObjBuilder(result, processingDeletedRecords);
         return true;
     }
 
@@ -564,33 +597,34 @@ namespace {
 
         int extentPages = ceilingDiv(params.endOfs - params.startOfs, int(PAGE_SIZE));
         int extentInMemCount = 0;
-
-        BSONArrayBuilder arr(result.subarrayStart("chunks"));
-        int chunkLength = params.granularity;
-        for (int chunk = 0; chunk < params.numberOfChunks; ++chunk) {
-            if (chunk == params.numberOfChunks - 1) {
-                chunkLength = params.lastChunkLength;
-            }
-            int pagesInChunk = ceilingDiv(chunkLength, PAGE_SIZE);
-
-            char* firstPageAddr = startAddr + (chunk * params.granularity);
-            vector<bool> isInMem(pagesInChunk);
-            if (! ProcessInfo::pagesInMemory(firstPageAddr, pagesInChunk, isInMem)) {
-                errmsg = "system call failed";
-                return false;
-            }
-
-            int inMemCount = 0;
-            for (int page = 0; page < pagesInChunk; ++page) {
-                if (isInMem[page]) {
-                    inMemCount++;
-                    extentInMemCount++;
+        { // ensure done() is called by invoking destructor when done with the builder
+            BSONArrayBuilder arr(result.subarrayStart("chunks"));
+            int chunkLength = params.granularity;
+            for (int chunk = 0; chunk < params.numberOfChunks; ++chunk) {
+                if (chunk == params.numberOfChunks - 1) {
+                    chunkLength = params.lastChunkLength;
                 }
-            }
+                int pagesInChunk = ceilingDiv(chunkLength, PAGE_SIZE);
 
-            arr.append(double(inMemCount) / pagesInChunk);
+                char* firstPageAddr = startAddr + (chunk * params.granularity);
+                vector<bool> isInMem(pagesInChunk);
+                if (! ProcessInfo::pagesInMemory(firstPageAddr, pagesInChunk, isInMem)) {
+                    errmsg = "system call failed";
+                    return false;
+                }
+
+                int inMemCount = 0;
+                for (int page = 0; page < pagesInChunk; ++page) {
+                    if (isInMem[page]) {
+                        inMemCount++;
+                        extentInMemCount++;
+                    }
+                }
+
+                arr.append(double(inMemCount) / pagesInChunk);
+            }
+            arr.doneFast(); //TODO(andrea.lattuada) can be removed when SERVER-7459 is fixed
         }
-        arr.done();
         result.append("inMem", double(extentInMemCount) / extentPages);
 
         return true;
@@ -668,6 +702,8 @@ namespace {
                                                 extentBuilder);
                     }
                 }
+                extentsArrayBuilder.doneFast(); //TODO(andrea.lattuada) can be removed when
+                                                //                      SERVER-7459 is fixed
             }
         }
         if (!success) return false;
@@ -773,6 +809,11 @@ namespace {
         BSONElement characteristicFieldElm = cmdObj["characteristicField"];
         if (characteristicFieldElm.ok()) {
             params.characteristicField = characteristicFieldElm.valuestrsafe();
+        }
+
+        BSONElement processDeletedRecordsElm = cmdObj["processDeletedRecords"];
+        if (processDeletedRecordsElm.ok()) {
+            params.processDeletedRecords = processDeletedRecordsElm.trueValue();
         }
 
         params.showRecords = cmdObj["showRecords"].trueValue();
