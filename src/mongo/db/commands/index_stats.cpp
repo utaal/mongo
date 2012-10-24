@@ -250,6 +250,7 @@ namespace mongo {
          *                          [0, 4, 1] means that root is expanded, its 4th child is expanded
          *                          and, in turn, the first child of the 4th child of the root is
          *                          expanded
+         * @return true on success, false otherwise
          */
         bool inspectBucket(const DiskLoc& dl, unsigned int depth, int childNum,
                            bool parentIsExpanded, vector<int> expandedAncestors) {
@@ -258,29 +259,43 @@ namespace mongo {
             killCurrentOp.checkForInterrupt();
 
             const BtreeBucket<Version>* bucket = dl.btree<Version>();
-            int usedKeyCount = 0;
+            int usedKeyCount = 0; // number of used keys in this bucket
 
             killCurrentOp.checkForInterrupt();
 
             int keyCount = bucket->getN();
-            int childrenCount = keyCount + 1;
+            int childrenCount = keyCount + 1; // maximum number of children of this bucket
+                                              // including the right child
 
             if (depth > _stats.depth) _stats.depth = depth;
 
             bool curNodeIsExpanded = false;
             if (parentIsExpanded) {
+                // if the parent node is expanded, statistics and info will be outputted for this
+                // bucket as well
                 expandedAncestors.push_back(childNum);
+
+                    // if the expansion of this node was requested
                 if (depth < _expandNodes.size() && _expandNodes[depth] == childNum) {
                     _stats.newBranchLevel(depth, childrenCount);
                     curNodeIsExpanded = true;
                 }
             }
 
+            const _KeyNode* firstKeyNode = NULL;
+            const _KeyNode* lastKeyNode = NULL;
             for (int i = 0; i < keyCount; i++ ) {
                 const _KeyNode& kn = bucket->k(i);
 
                 if ( kn.isUsed() ) {
                     ++usedKeyCount;
+                    if (i == 0) {
+                        firstKeyNode = &kn;
+                    }
+                    else if (i == keyCount - 1) {
+                        lastKeyNode = &kn;
+                    }
+
                     this->inspectBucket(kn.prevChildBucket, depth + 1, i, curNodeIsExpanded,
                                         expandedAncestors);
                 }
@@ -301,12 +316,13 @@ namespace mongo {
             _stats.wholeTree.addStats(keyCount, usedKeyCount, bucket, sizeof(_KeyNode));
 
             if (parentIsExpanded) {
-                // TODO(andrea.lattuada) make sure key node is used (non-empty)
                 NodeInfo nodeInfo;
-                if (bucket->getN() > 0)
-                    nodeInfo.firstKey = bucket->keyAt(0).toBson();
-                if (bucket->getN() > 1)
-                    nodeInfo.lastKey = bucket->keyAt(bucket->getN() - 1).toBson();
+                if (firstKeyNode != NULL) {
+                    nodeInfo.firstKey = KeyNode(*bucket, *firstKeyNode).key.toBson();
+                }
+                if (lastKeyNode != NULL) {
+                    nodeInfo.lastKey = KeyNode(*bucket, *lastKeyNode).key.toBson();
+                }
 
                 nodeInfo.childNum = childNum;
                 nodeInfo.depth = depth;
@@ -335,6 +351,11 @@ namespace mongo {
     typedef BtreeInspectorImpl<V0> BtreeInspectorV0;
     typedef BtreeInspectorImpl<V1> BtreeInspectorV1;
 
+    /**
+     * Run analysis with the provided parameters.
+     *
+     * @return true on success, false otherwise
+     */
     bool runInternal(string& errmsg, NamespaceDetails* nsd, IndexStatsParams params,
                      BSONObjBuilder& result) {
 
