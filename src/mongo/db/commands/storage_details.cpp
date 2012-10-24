@@ -458,6 +458,8 @@ namespace {
      *       onDiskBytes: <length of the extent or range>,
      * (opt) characteristicCount: <number of records containing the field used to tell them apart>
      *       characteristicAvg: <average value of the characteristic field>
+     *       outOfOrderRecs: <number of records that follow - in the record linked list -
+     *                        a record that is located further in the extent>
      *       freeRecsPerBucket: [ ... ],
      * The nth element in the freeRecsPerBucket array is the count of deleted records in the
      * nth bucket of the deletedList.
