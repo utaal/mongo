@@ -813,6 +813,12 @@
     <ClCompile Include="..\db\hasher.cpp">
       <Filter>db\Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\util\net\ssl_manager.cpp">
+      <Filter>util\net</Filter>
+    </ClCompile>
+    <ClCompile Include="cluster_constants.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\pch.h" />
@@ -1295,6 +1301,36 @@
     </ClInclude>
     <ClInclude Include="..\db\hasher.h">
       <Filter>db\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\platform\cstdint.h">
+      <Filter>platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\util\net\hostandport.h">
+      <Filter>util\net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\util\net\listen.h">
+      <Filter>util\net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\util\net\message.h">
+      <Filter>util\net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\util\net\message_port.h">
+      <Filter>util\net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\util\net\message_server.h">
+      <Filter>util\net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\util\net\miniwebserver.h">
+      <Filter>util\net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\util\net\sock.h">
+      <Filter>util\net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\util\net\ssl_manager.h">
+      <Filter>util\net</Filter>
+    </ClInclude>
+    <ClInclude Include="cluster_constants.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

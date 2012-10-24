@@ -49,6 +49,7 @@ clientSource = [
     'mongo/util/net/message.cpp',
     'mongo/util/net/message_port.cpp',
     'mongo/util/net/sock.cpp',
+    'mongo/util/net/ssl_manager.cpp',
     'mongo/util/password.cpp',
     'mongo/util/ramlog.cpp',
     'mongo/util/signal_handlers.cpp',
@@ -138,5 +139,6 @@ prefix = GetOption("prefix")
 env.Install(prefix + "/lib", '${LIBPREFIX}mongoclient${LIBSUFFIX}')
 
 for x in clientHeaderDirectories:
-    env.Install(prefix + "/include/mongo/" + x,
-                [Glob('mongo/%s*.h' % x), Glob('mongo/%s*.hpp' % x)])
+    inst = env.Install(prefix + "/include/mongo/" + x,
+                       [Glob('mongo/%s*.h' % x), Glob('mongo/%s*.hpp' % x)])
+    env.AddPostAction(inst, Chmod('$TARGET', 0644))
