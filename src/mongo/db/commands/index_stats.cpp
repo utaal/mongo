@@ -61,7 +61,7 @@ namespace mongo {
         unsigned int keyCount;
         unsigned int usedKeyCount;
         unsigned int depth;
-        double emptyRatio;
+        double fillRatio;
     };
 
     /**
@@ -76,7 +76,7 @@ namespace mongo {
 
         unsigned int numBuckets;
         SummaryEstimators<double, QUANTILES> bsonRatio;
-        SummaryEstimators<double, QUANTILES> emptyRatio;
+        SummaryEstimators<double, QUANTILES> fillRatio;
         SummaryEstimators<double, QUANTILES> keyNodeRatio;
         SummaryEstimators<unsigned int, QUANTILES> keyCount;
         SummaryEstimators<unsigned int, QUANTILES> usedKeyCount;
@@ -93,7 +93,7 @@ namespace mongo {
             this->numBuckets += 1;
             this->bsonRatio << double(bucket->getBsonSize()) / bucket->bodySize();
             this->keyNodeRatio << double(keyNodeBytes * keyCount) / bucket->bodySize();
-            this->emptyRatio << double(bucket->getEmptySize()) / bucket->bodySize();
+            this->fillRatio << (1. - double(bucket->getEmptySize()) / bucket->bodySize());
             this->keyCount << keyCount;
             this->usedKeyCount << usedKeyCount;
         }
@@ -106,7 +106,7 @@ namespace mongo {
                                 << "usedKeyCount" << nodeInfo->usedKeyCount
                                 << "diskLoc" << nodeInfo->diskLoc
                                 << "depth" << nodeInfo->depth
-                                << "emptyRatio" << nodeInfo->emptyRatio;
+                                << "fillRatio" << nodeInfo->fillRatio;
                 if (nodeInfo->firstKey) nodeInfoBuilder << "firstKey" << *(nodeInfo->firstKey);
                 if (nodeInfo->lastKey) nodeInfoBuilder << "lastKey" << *(nodeInfo->lastKey);
             }
@@ -116,7 +116,7 @@ namespace mongo {
                     << "usedKeyCount" << statisticSummaryToBSONObj(usedKeyCount)
                     << "bsonRatio" << statisticSummaryToBSONObj(bsonRatio)
                     << "keyNodeRatio" << statisticSummaryToBSONObj(keyNodeRatio)
-                    << "emptyRatio" << statisticSummaryToBSONObj(emptyRatio);
+                    << "fillRatio" << statisticSummaryToBSONObj(fillRatio);
         }
     };
 
@@ -192,7 +192,12 @@ namespace mongo {
         return (double) sum / count;
     }
 
-
+    /**
+     * Performs the btree analysis for a generic btree version. After inspect() is called on the
+     * tree root, statistics are available through stats().
+     *
+     * Template-based implementation in BtreeInspectorImpl.
+     */
     class BtreeInspector {
     public:
         BtreeInspector() {
@@ -202,11 +207,13 @@ namespace mongo {
         }
 
         virtual bool inspect(DiskLoc& head) = 0;
+
         virtual BtreeStats& stats() = 0;
 
         MONGO_DISALLOW_COPYING(BtreeInspector);
     };
 
+    // See BtreeInspector.
     template <class Version>
     class BtreeInspectorImpl : public BtreeInspector {
     public:
@@ -229,6 +236,21 @@ namespace mongo {
         }
 
     private:
+        /**
+         * Recursively inspect btree buckets.
+         * @param dl DiskLoc for the current bucket
+         * @param depth depth for the current bucket (root is 0)
+         * @param childNum so that the current bucket is the childNum-th child of its parent
+         *                 (the right child is numbered as the last left child + 1)
+         * @param parentIsExpanded bucket expansion was requested for the parent bucket so the
+         *                         statistics and information for this bucket will appear in the
+         *                         subtree
+         * @param expandedAncestors if the d-th element is k, the k-th child of an expanded parent
+         *                          at depth d is expanded
+         *                          [0, 4, 1] means that root is expanded, its 4th child is expanded
+         *                          and, in turn, the first child of the 4th child of the root is
+         *                          expanded
+         */
         bool inspectBucket(const DiskLoc& dl, unsigned int depth, int childNum,
                            bool parentIsExpanded, vector<int> expandedAncestors) {
 
@@ -291,7 +313,8 @@ namespace mongo {
                 nodeInfo.diskLoc = dl.toBSONObj();
                 nodeInfo.keyCount = keyCount;
                 nodeInfo.usedKeyCount = bucket->getN();
-                nodeInfo.emptyRatio = double(bucket->getEmptySize()) / BucketBasics::bodySize();
+                nodeInfo.fillRatio =
+                    (1. - double(bucket->getEmptySize()) / BucketBasics::bodySize());
 
                 _stats.nodeAt(depth, childNum).nodeInfo = nodeInfo;
             }
