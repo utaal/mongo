@@ -38,6 +38,9 @@
 
 namespace mongo {
 
+    /**
+     * Holds operation parameters.
+     */
     struct IndexStatsParams {
         IndexStatsParams() : analyzeStorage(false) {
         }
@@ -47,28 +50,9 @@ namespace mongo {
         vector<int> expandNodes;
     };
 
-    class IndexStatsCmd : public Command {
-    public:
-        IndexStatsCmd() : Command("indexStats") {}
-
-        virtual bool slaveOk() const {
-            return true;
-        }
-
-        virtual void help(stringstream& h) const { h << "TODO. Slow."; }
-
-        //TODO(andrea.lattuada) verify this is enough
-        virtual LockType locktype() const { return READ; }
-
-        bool run(const string& dbname, BSONObj& cmdObj, int, string& errmsg,
-                 BSONObjBuilder& result, bool fromRepl);
-
-        bool runInternal(string& errmsg, NamespaceDetails* nsd, IndexStatsParams params,
-                         BSONObjBuilder& result);
-    } indexStatsCmd;
-
-    struct BtreeStats;
-
+    /**
+     * Holds information about a single btree bucket (not its subtree).
+     */
     struct NodeInfo {
         boost::optional<BSONObj> firstKey;
         boost::optional<BSONObj> lastKey;
@@ -80,7 +64,12 @@ namespace mongo {
         double emptyRatio;
     };
 
-    struct AreaStats {
+    /**
+     * Aggregates and statistics for some part of the tree:
+     *     the entire tree, a level or a certain subtree.
+     */
+    class AreaStats {
+    public:
         static const int QUANTILES = 99;
 
         boost::optional<NodeInfo> nodeInfo;
@@ -109,7 +98,7 @@ namespace mongo {
             this->usedKeyCount << usedKeyCount;
         }
 
-        void appendTo(BSONObjBuilder& builder, const BtreeStats* globalStats) const {
+        void appendTo(BSONObjBuilder& builder) const {
             if (nodeInfo) {
                 BSONObjBuilder nodeInfoBuilder(builder.subobjStart("nodeInfo"));
                 nodeInfoBuilder << "childNum" << nodeInfo->childNum
@@ -131,7 +120,11 @@ namespace mongo {
         }
     };
 
-    struct BtreeStats {
+    /**
+     * Holds statistics and aggregates for the entire tree and its parts.
+     */
+    class BtreeStats {
+    public:
         unsigned int bucketBodyBytes;
         unsigned int depth;
         AreaStats wholeTree;
@@ -156,19 +149,25 @@ namespace mongo {
             builder << "bucketBodyBytes" << bucketBodyBytes;
             builder << "depth" << depth;
 
-            {
+            { // ensure done() is called by invoking destructor when done with the builder
                 BSONObjBuilder wholeTreeBuilder(builder.subobjStart("overall"));
-                wholeTree.appendTo(wholeTreeBuilder, this);
+                wholeTree.appendTo(wholeTreeBuilder);
+                wholeTreeBuilder.doneFast(); //TODO(andrea.lattuada) can be removed when SERVER-7459
+                                             //                      is fixed
             }
 
-            {
+            { // ensure done() is called by invoking destructor when done with the builder
                 BSONArrayBuilder perLevelArrayBuilder(builder.subarrayStart("perLevel"));
                 for (vector<AreaStats>::const_iterator it = perLevel.begin();
                      it != perLevel.end();
                      ++it) {
                     BSONObjBuilder levelBuilder(perLevelArrayBuilder.subobjStart());
-                    it->appendTo(levelBuilder, this);
+                    it->appendTo(levelBuilder);
+                    levelBuilder.doneFast(); //TODO(andrea.lattuada) can be removed when SERVER-7459
+                                             //                      is fixed
                 }
+                perLevelArrayBuilder.doneFast(); //TODO(andrea.lattuada) can be removed when
+                                                 //                      SERVER-7459 is fixed
             }
 
             if (branch.size() > 1) {
@@ -180,10 +179,12 @@ namespace mongo {
                     const vector<AreaStats>& children = branch[depth];
                     for (unsigned int child = 0; child < children.size(); ++child) {
                         BSONObjBuilder childBuilder(childrenArrayBuilder.subobjStart());
-                        children[child].appendTo(childBuilder, this);
-                    }
+                        children[child].appendTo(childBuilder);
+                        childBuilder.doneFast(); //TODO(andrea.lattuada) can be removed when
+                    }                            //                      SERVER-7459 is fixed
                 }
-            }
+                expandedNodesArrayBuilder.doneFast(); //TODO(andrea.lattuada) can be removed when
+            }                                         //                      SERVER-7459 is fixed
         }
     };
 
@@ -217,7 +218,11 @@ namespace mongo {
         BtreeInspectorImpl(vector<int> expandNodes) : _expandNodes(expandNodes) {
         }
 
-        virtual bool inspect(DiskLoc& head) /*override*/;
+        virtual bool inspect(DiskLoc& head)  {
+            _stats.bucketBodyBytes = BucketBasics::bodySize();
+            vector<int> expandedAncestors;
+            return this->inspectBucket(head, 0, 0, true, expandedAncestors);
+        }
 
         virtual BtreeStats& stats() {
             return _stats;
@@ -225,7 +230,80 @@ namespace mongo {
 
     private:
         bool inspectBucket(const DiskLoc& dl, unsigned int depth, int childNum,
-                           bool parentIsExpanded, vector<int> expandedAncestors);
+                           bool parentIsExpanded, vector<int> expandedAncestors) {
+
+            if (dl.isNull()) return true;
+            killCurrentOp.checkForInterrupt();
+
+            const BtreeBucket<Version>* bucket = dl.btree<Version>();
+            int usedKeyCount = 0;
+
+            killCurrentOp.checkForInterrupt();
+
+            int keyCount = bucket->getN();
+            int childrenCount = keyCount + 1;
+
+            if (depth > _stats.depth) _stats.depth = depth;
+
+            bool curNodeIsExpanded = false;
+            if (parentIsExpanded) {
+                expandedAncestors.push_back(childNum);
+                if (depth < _expandNodes.size() && _expandNodes[depth] == childNum) {
+                    _stats.newBranchLevel(depth, childrenCount);
+                    curNodeIsExpanded = true;
+                }
+            }
+
+            for (int i = 0; i < keyCount; i++ ) {
+                const _KeyNode& kn = bucket->k(i);
+
+                if ( kn.isUsed() ) {
+                    ++usedKeyCount;
+                    this->inspectBucket(kn.prevChildBucket, depth + 1, i, curNodeIsExpanded,
+                                        expandedAncestors);
+                }
+            }
+            this->inspectBucket(bucket->getNextChild(), depth + 1, keyCount, curNodeIsExpanded,
+                                expandedAncestors);
+
+            killCurrentOp.checkForInterrupt();
+
+            if (parentIsExpanded) {
+                expandedAncestors.pop_back();
+            }
+
+            for (unsigned int d = 0; d < expandedAncestors.size(); ++d) {
+                AreaStats& nodeStats = _stats.nodeAt(d, expandedAncestors.at(d));
+                nodeStats.addStats(keyCount, usedKeyCount, bucket, sizeof(_KeyNode));
+            }
+            _stats.wholeTree.addStats(keyCount, usedKeyCount, bucket, sizeof(_KeyNode));
+
+            if (parentIsExpanded) {
+                // TODO(andrea.lattuada) make sure key node is used (non-empty)
+                NodeInfo nodeInfo;
+                if (bucket->getN() > 0)
+                    nodeInfo.firstKey = bucket->keyAt(0).toBson();
+                if (bucket->getN() > 1)
+                    nodeInfo.lastKey = bucket->keyAt(bucket->getN() - 1).toBson();
+
+                nodeInfo.childNum = childNum;
+                nodeInfo.depth = depth;
+                nodeInfo.diskLoc = dl.toBSONObj();
+                nodeInfo.keyCount = keyCount;
+                nodeInfo.usedKeyCount = bucket->getN();
+                nodeInfo.emptyRatio = double(bucket->getEmptySize()) / BucketBasics::bodySize();
+
+                _stats.nodeAt(depth, childNum).nodeInfo = nodeInfo;
+            }
+
+            while (_stats.perLevel.size() < depth + 1)
+                _stats.perLevel.push_back(AreaStats());
+            dassert(_stats.perLevel.size() > depth);
+            AreaStats& level = _stats.perLevel[depth];
+            level.addStats(keyCount, usedKeyCount, bucket, sizeof(_KeyNode));
+
+            return true;
+        } 
 
         vector<int> _expandNodes;
         BtreeStats _stats;
@@ -234,133 +312,9 @@ namespace mongo {
     typedef BtreeInspectorImpl<V0> BtreeInspectorV0;
     typedef BtreeInspectorImpl<V1> BtreeInspectorV1;
 
-    template <class Version>
-    bool BtreeInspectorImpl<Version>::inspect(DiskLoc& head) {
-        _stats.bucketBodyBytes = BucketBasics::bodySize();
-        vector<int> expandedAncestors;
-        return this->inspectBucket(head, 0, 0, true, expandedAncestors);
-    }
+    bool runInternal(string& errmsg, NamespaceDetails* nsd, IndexStatsParams params,
+                     BSONObjBuilder& result) {
 
-    template <class Version>
-    bool BtreeInspectorImpl<Version>::inspectBucket(const DiskLoc& dl, unsigned int depth,
-                                                    int childNum, bool parentIsExpanded,
-                                                    vector<int> expandedAncestors) {
-        if (dl.isNull()) return true;
-        killCurrentOp.checkForInterrupt();
-
-        const BtreeBucket<Version>* bucket = dl.btree<Version>();
-        int usedKeyCount = 0;
-
-        killCurrentOp.checkForInterrupt();
-
-        int keyCount = bucket->getN();
-        int childrenCount = keyCount + 1;
-
-        if (depth > _stats.depth) _stats.depth = depth;
-
-        bool curNodeIsExpanded = false;
-        if (parentIsExpanded) {
-            expandedAncestors.push_back(childNum);
-            if (depth < _expandNodes.size() && _expandNodes[depth] == childNum) {
-                _stats.newBranchLevel(depth, childrenCount);
-                curNodeIsExpanded = true;
-            }
-        }
-
-        for (int i = 0; i < keyCount; i++ ) {
-            const _KeyNode& kn = bucket->k(i);
-
-            if ( kn.isUsed() ) {
-                ++usedKeyCount;
-                this->inspectBucket(kn.prevChildBucket, depth + 1, i, curNodeIsExpanded,
-                                    expandedAncestors);
-            }
-        }
-        this->inspectBucket(bucket->getNextChild(), depth + 1, keyCount, curNodeIsExpanded,
-                            expandedAncestors);
-
-        killCurrentOp.checkForInterrupt();
-
-        if (parentIsExpanded) {
-            expandedAncestors.pop_back();
-        }
-
-        for (unsigned int d = 0; d < expandedAncestors.size(); ++d) {
-            AreaStats& nodeStats = _stats.nodeAt(d, expandedAncestors.at(d));
-            nodeStats.addStats(keyCount, usedKeyCount, bucket, sizeof(_KeyNode));
-        }
-        _stats.wholeTree.addStats(keyCount, usedKeyCount, bucket, sizeof(_KeyNode));
-
-        if (parentIsExpanded) {
-            // TODO(andrea.lattuada) make sure key node is used (non-empty)
-            NodeInfo nodeInfo;
-            if (bucket->getN() > 0)
-                nodeInfo.firstKey = bucket->keyAt(0).toBson();
-            if (bucket->getN() > 1)
-                nodeInfo.lastKey = bucket->keyAt(bucket->getN() - 1).toBson();
-
-            nodeInfo.childNum = childNum;
-            nodeInfo.depth = depth;
-            nodeInfo.diskLoc = dl.toBSONObj();
-            nodeInfo.keyCount = keyCount;
-            nodeInfo.usedKeyCount = bucket->getN();
-            nodeInfo.emptyRatio = double(bucket->getEmptySize()) / BucketBasics::bodySize();
-
-            _stats.nodeAt(depth, childNum).nodeInfo = nodeInfo;
-        }
-
-        while (_stats.perLevel.size() < depth + 1)
-            _stats.perLevel.push_back(AreaStats());
-        dassert(_stats.perLevel.size() > depth);
-        AreaStats& level = _stats.perLevel[depth];
-        level.addStats(keyCount, usedKeyCount, bucket, sizeof(_KeyNode));
-
-        return true;
-    }
-
-    bool IndexStatsCmd::run(const string& dbname, BSONObj& cmdObj, int, string& errmsg,
-                            BSONObjBuilder& result, bool fromRepl) {
-
-        string ns = dbname + "." + cmdObj.firstElement().valuestrsafe();
-        NamespaceDetails* nsd = nsdetails(ns.c_str());
-        if (!cmdLine.quiet) {
-            tlog() << "CMD: indexStats " << ns << endl;
-        }
-        if (!nsd) {
-            errmsg = "ns not found";
-            return false;
-        }
-
-        IndexStatsParams params;
-
-        // { name: _index_name }
-        BSONElement name = cmdObj["name"];
-        if (!name.ok() || name.type() != String) {
-            errmsg = "an index name is required, use {name: \"indexname\"}";
-            return false;
-        }
-        params.indexName = name.String();
-
-        params.analyzeStorage = cmdObj["analyzeStorage"].trueValue();
-
-        BSONElement expandNodes = cmdObj["expandNodes"];
-        if (expandNodes.ok()) {
-            vector<BSONElement> arr = expandNodes.Array();
-            for (vector<BSONElement>::const_iterator it = arr.begin(); it != arr.end(); ++it) {
-                params.expandNodes.push_back(int(it->Number()));
-            }
-        }
-
-        bool success = false;
-        BSONObjBuilder resultBuilder;
-        success = runInternal(errmsg, nsd, params, resultBuilder);
-        if (!success) return false;
-        result.appendElements(resultBuilder.obj());
-        return true;
-    }
-
-    bool IndexStatsCmd::runInternal(string& errmsg, NamespaceDetails* nsd, IndexStatsParams params,
-                                    BSONObjBuilder& result) {
         IndexDetails* detailsPtr = NULL;
         for (NamespaceDetails::IndexIterator it = nsd->ii(); it.more(); ) {
             IndexDetails& cur = it.next();
@@ -409,7 +363,9 @@ namespace mongo {
                 extentBuilder << "entries" << recordCount
                               << "recLen" << recLen
                               << "usage" << (double) recLen / (ex->length - Extent::HeaderSize());
-            }
+
+                extentBuilder.doneFast(); //TODO(andrea.lattuada) can be removed when
+            }                             //                      SERVER-7459 is fixed
             extentsArrayBuilder.doneFast();
             result << "numRecords" << totRecordCount
                    << "overallStorageUsage" << (double) totRecLen / totExtentSpace;
@@ -431,5 +387,68 @@ namespace mongo {
 
         return true;
     }
+
+    class IndexStatsCmd : public Command {
+    public:
+        IndexStatsCmd() : Command("indexStats") {}
+
+        virtual bool slaveOk() const {
+            return true;
+        }
+
+        virtual void help(stringstream& h) const { h << "TODO. Slow."; }
+
+        virtual LockType locktype() const { return READ; }
+
+        bool run(const string& dbname, BSONObj& cmdObj, int, string& errmsg,
+                 BSONObjBuilder& result, bool fromRepl) {
+
+            string ns = dbname + "." + cmdObj.firstElement().valuestrsafe();
+            NamespaceDetails* nsd = nsdetails(ns.c_str());
+            if (!cmdLine.quiet) {
+                tlog() << "CMD: indexStats " << ns << endl;
+            }
+            if (!nsd) {
+                errmsg = "ns not found";
+                return false;
+            }
+
+            IndexStatsParams params;
+
+            // { name: _index_name }
+            BSONElement name = cmdObj["name"];
+            if (!name.ok() || name.type() != String) {
+                errmsg = "an index name is required, use {name: \"indexname\"}";
+                return false;
+            }
+            params.indexName = name.String();
+
+            params.analyzeStorage = cmdObj["analyzeStorage"].trueValue();
+
+            BSONElement expandNodes = cmdObj["expandNodes"];
+            if (expandNodes.ok()) {
+                if (expandNodes.type() != mongo::Array) {
+                    errmsg = "expandNodes must be an array of numbers";
+                    return false;
+                }
+                vector<BSONElement> arr = expandNodes.Array();
+                for (vector<BSONElement>::const_iterator it = arr.begin(); it != arr.end(); ++it) {
+                    if (!it->isNumber()) {
+                        errmsg = "expandNodes must be an array of numbers";
+                        return false;
+                    }
+                    params.expandNodes.push_back(int(it->Number()));
+                }
+            }
+
+            bool success = false;
+            BSONObjBuilder resultBuilder;
+            success = runInternal(errmsg, nsd, params, resultBuilder);
+            if (!success) return false;
+            result.appendElements(resultBuilder.obj());
+            return true;
+        }
+
+    } indexStatsCmd;
 
 } // namespace mongo
