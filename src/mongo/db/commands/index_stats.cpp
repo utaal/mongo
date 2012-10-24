@@ -42,11 +42,10 @@ namespace mongo {
      * Holds operation parameters.
      */
     struct IndexStatsParams {
-        IndexStatsParams() : analyzeStorage(false) {
+        IndexStatsParams() {
         }
 
         string indexName;
-        bool analyzeStorage;
         vector<int> expandNodes;
     };
 
@@ -352,68 +351,35 @@ namespace mongo {
     typedef BtreeInspectorImpl<V1> BtreeInspectorV1;
 
     /**
-     * Run analysis with the provided parameters.
+     * Run analysis with the provided parameters. See IndexStatsCmd for in-depth expanation of
+     * output.
      *
      * @return true on success, false otherwise
      */
-    bool runInternal(string& errmsg, NamespaceDetails* nsd, IndexStatsParams params,
+    bool runInternal(const NamespaceDetails* nsd, IndexStatsParams params, string& errmsg,
                      BSONObjBuilder& result) {
 
         IndexDetails* detailsPtr = NULL;
-        for (NamespaceDetails::IndexIterator it = nsd->ii(); it.more(); ) {
+
+        // casting away const, we are not going to modify NamespaceDetails
+        // but ii() is not marked const
+        for (NamespaceDetails::IndexIterator it = const_cast<NamespaceDetails*>(nsd)->ii();
+             it.more();) {
             IndexDetails& cur = it.next();
             if (cur.indexName() == params.indexName) detailsPtr = &cur;
         }
+
         if (detailsPtr == NULL) {
             errmsg = "the requested index does not exist";
             return false;
         }
+
         IndexDetails& details = *detailsPtr;
         result << "name" << details.indexName()
                << "version" << details.version()
                << "isIdIndex" << details.isIdIndex()
                << "keyPattern" << details.keyPattern()
                << "storageNs" << details.indexNamespace();
-
-        if (params.analyzeStorage) {
-            NamespaceDetails* indexNsd = nsdetails(details.indexNamespace().c_str());
-            BSONArrayBuilder extentsArrayBuilder(result.subarrayStart("extents"));
-            unsigned int totRecordCount = 0;
-            unsigned int totRecLen = 0;
-            unsigned int totExtentSpace = 0;
-            for (Extent* ex = DataFileMgr::getExtent(indexNsd->firstExtent);
-                 ex != NULL; ex = ex->getNextExtent()) {
-
-                killCurrentOp.checkForInterrupt();
-
-                BSONObjBuilder extentBuilder(extentsArrayBuilder.subobjStart());
-                extentBuilder << "diskLoc" << ex->myLoc.toBSONObj()
-                              << "length" << ex->length;
-
-                unsigned int recordCount = 0;
-                unsigned int recLen = 0;
-                Record* r;
-                for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) {
-                    killCurrentOp.checkForInterrupt();
-                    r = dl.rec();
-
-                    recLen += r->lengthWithHeaders();
-                    totRecLen += r->lengthWithHeaders();
-                    ++recordCount;
-                    ++totRecordCount;
-                }
-                totExtentSpace += (ex->length - Extent::HeaderSize());
-
-                extentBuilder << "entries" << recordCount
-                              << "recLen" << recLen
-                              << "usage" << (double) recLen / (ex->length - Extent::HeaderSize());
-
-                extentBuilder.doneFast(); //TODO(andrea.lattuada) can be removed when
-            }                             //                      SERVER-7459 is fixed
-            extentsArrayBuilder.doneFast();
-            result << "numRecords" << totRecordCount
-                   << "overallStorageUsage" << (double) totRecLen / totExtentSpace;
-        }
 
         scoped_ptr<BtreeInspector> inspector(NULL);
         switch (details.version()) {
@@ -426,12 +392,19 @@ namespace mongo {
                                    << "not supported";
             return false;
         }
+
         inspector->inspect(details.head);
+
         inspector->stats().appendTo(result);
 
         return true;
     }
 
+    // Command
+
+    /**
+     * This command provides detailed and aggreate information and statistics for a btree. 
+     */
     class IndexStatsCmd : public Command {
     public:
         IndexStatsCmd() : Command("indexStats") {}
@@ -467,8 +440,6 @@ namespace mongo {
             }
             params.indexName = name.String();
 
-            params.analyzeStorage = cmdObj["analyzeStorage"].trueValue();
-
             BSONElement expandNodes = cmdObj["expandNodes"];
             if (expandNodes.ok()) {
                 if (expandNodes.type() != mongo::Array) {
@@ -487,7 +458,12 @@ namespace mongo {
 
             bool success = false;
             BSONObjBuilder resultBuilder;
-            success = runInternal(errmsg, nsd, params, resultBuilder);
+            try {
+                success = runInternal(nsd, params, errmsg, resultBuilder);
+            } catch (DBException& e) {
+                errmsg = str::stream() << "unexpected error: code " << e.getCode();
+                return false;
+            }
             if (!success) return false;
             result.appendElements(resultBuilder.obj());
             return true;
