@@ -32,7 +32,7 @@ namespace mongo {
  * It differs by being tailored for typical descriptive statistics use cases
  * thus providing a simpler (even though less flexible) interface.
  */
-// don't use this namespace directly, use the name imported in mongo::
+// don't use this namespace directly, use the names imported in mongo:: at the end of this file
 namespace _descriptive_stats {
 
     #include <cmath>
