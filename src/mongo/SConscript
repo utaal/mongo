@@ -92,6 +92,7 @@ commonFiles = [ "pch.cpp",
                 "util/stack_introspect.cpp",
                 "util/concurrency/synchronization.cpp",
                 "util/net/sock.cpp",
+                "util/net/ssl_manager.cpp",
                 "util/net/httpclient.cpp",
                 "util/net/message.cpp",
                 "util/net/message_port.cpp",
@@ -254,6 +255,7 @@ serverOnlyFiles = [ "db/curop.cpp",
                     "db/btreebuilder.cpp",
                     "util/logfile.cpp",
                     "util/alignedbuilder.cpp",
+                    "util/elapsed_tracker.cpp",
                     "db/mongommf.cpp",
                     "db/dur.cpp",
                     "db/durop.cpp",
@@ -339,7 +341,8 @@ serverOnlyFiles += mmapFiles
 
 serverOnlyFiles += [ "db/stats/snapshots.cpp" ]
 
-env.Library( "coreshard", [ "s/config.cpp",
+env.Library( "coreshard", [ "s/cluster_constants.cpp",
+                            "s/config.cpp",
                             "s/grid.cpp",
                             "s/chunk.cpp",
                             "s/shard.cpp",
@@ -382,15 +385,19 @@ serverOnlyFiles += [ "s/d_logic.cpp",
                      "s/d_split.cpp",
                      "client/distlock_test.cpp",
                      "s/d_chunk_manager.cpp",
-                     "db/module.cpp",
-                     "db/modules/mms.cpp", ]
+                     "db/module.cpp" ]
 
 env.StaticLibrary("defaultversion", "s/default_version.cpp")
+
+env.StaticLibrary("geometry", [ "db/geo/hash.cpp", "db/geo/shapes.cpp" ], LIBDEPS = [ "bson" ])
+
+env.CppUnitTest("hash_test", [ "db/geo/hash_test.cpp" ], LIBDEPS = ["geometry"],)
 
 env.StaticLibrary("serveronly", serverOnlyFiles,
                   LIBDEPS=["coreshard",
                            "dbcmdline",
                            "defaultversion",
+                           "geometry",
                            '$BUILD_DIR/third_party/shim_snappy'])
 
 # These files go into mongos and mongod only, not into the shell or any tools.
@@ -408,15 +415,6 @@ everythingButMongodAndMongosFiles = [
 env.StaticLibrary("notmongodormongos", everythingButMongodAndMongosFiles)
 
 mongodOnlyFiles = [ "db/db.cpp", "db/compact.cpp", "db/commands/touch.cpp" ]
-
-# create a library per module, and add it as a dependency
-# for the mongod target; as of now, modules are only included
-# in mongod, as though they were part of serverOnlyFiles
-modules = []
-for modName, modSources in env["MONGO_MODULES"].items():
-    libName = "mod%s" % modName
-    env.StaticLibrary(libName, modSources)
-    modules.append(libName)
 
 # ----- TARGETS ------
 
@@ -437,7 +435,7 @@ mongod = env.Install(
                                 "mongodandmongos",
                                 "ntservice",
                                 "serveronly",
-                                ] + modules ) )
+                                ] + env['MODULE_LIBDEPS_MONGOD'] ) )
 Default( mongod )
 
 # tools
@@ -467,7 +465,7 @@ env.Install( '#/', [
 mongos = env.Program(
     "mongos", [ "s/server.cpp"] ,
     LIBDEPS=["mongoscore", "coreserver", "coredb", "mongocommon", "coreshard", "dbcmdline", "ntservice",
-             "mongodandmongos", "db/auth/auth"])
+             "mongodandmongos", "db/auth/auth"] + env['MODULE_LIBDEPS_MONGOS'])
 env.Install( '#/', mongos )
 
 env.Library("clientandshell", ["client/clientAndShell.cpp"], LIBDEPS=["mongocommon", "defaultversion", "gridfs", "notmongodormongos"])
@@ -545,7 +543,7 @@ if shellEnv is not None:
         "mongo",
         coreShellFiles,
         LIBDEPS=["coreserver", "clientandshell",
-                 "$BUILD_DIR/third_party/pcrecpp"] )
+                 "$BUILD_DIR/third_party/pcrecpp"] + env['MODULE_LIBDEPS_MONGOSHELL'] )
 
     shellEnv.Install( '#/', mongo_shell )
 
