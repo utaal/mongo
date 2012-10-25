@@ -51,6 +51,7 @@
 #include "../util/startup_test.h"
 #include "../util/processinfo.h"
 #include "../util/ramlog.h"
+#include "mongo/util/elapsed_tracker.h"
 
 #include "shard.h"
 #include "d_logic.h"
@@ -758,7 +759,9 @@ namespace mongo {
         migrateFromStatus.logOp( opstr , ns , obj , patt );
     }
 
-    void aboutToDeleteForSharding( const Database* db , const DiskLoc& dl ) {
+    void aboutToDeleteForSharding( const Database* db, const NamespaceDetails* nsd, const DiskLoc& dl ) {
+        if ( nsd->isCapped() )
+            return;
         migrateFromStatus.aboutToDelete( db , dl );
     }
 
