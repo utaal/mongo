@@ -434,6 +434,70 @@ DBCollection.prototype.diskStorageStats = function(opt) {
     return this._db.runCommand(cmd);
 }
 
+DBCollection.prototype.printDiskStorageStats = function(params) {
+    print("\n\t#recs\t[===occupied by BSON=== ---occupied by padding---       free           ]" +
+          "   BSON%   \trecord%   \tpadding");
+    print();
+    var stats = this.diskStorageStats(params);
+    if (!stats.ok) {
+        print("error executing storageDetails command: " + stats.errmsg);
+    }
+    var percent = function(val) {
+        return (val * 100).toFixed(2) + " %";
+    };
+    var BAR_WIDTH = 70;
+    var formatSizeBar = function(data) {
+        var count = 0;
+        var barComponent = function(percent, str) {
+            var b = "";
+            for (var i = 0; i < BAR_WIDTH * percent; ++i) {
+                if (count < BAR_WIDTH) {
+                    b += str;
+                    ++count;
+                }
+            }
+            return b;
+        }
+        var bar = "[";
+        res += barComponent(d.bsonBytes / d.onDiskBytes, "=");
+        res += barComponent((d.recBytes - d.bsonBytes) / d.onDiskBytes, "-");
+        for (; count < BAR_WIDTH; ++count) {
+            res += " ";
+        }
+        bar += "]";
+        return data.numEntries.toFixed(0) + "\t" + bar + "   " +
+               percent(data.bsonBytes / data.onDiskBytes) + "\t" +
+               percent(data.recBytes / data.onDiskBytes) + "   \t" +
+               (data.recBytes / data.bsonBytes).toFixed(4);
+    };
+    var printExtent = function(ex, rng) {
+        print("--- extent " + rng + " ---");
+        print("tot\t" + formatSizeBar(ex));
+        print();
+        if (ex.chunks) {
+            for (var c = 0; c < ex.chunks.length; ++c) {
+                var chunk = ex.chunks[c];
+                print(c + ":\t" + formatSizeBar(chunk));
+            }
+            print();
+        }
+    };
+    if (stats.extents) {
+        print("--- extent overview ---\n");
+        for (var i = 0; i < stats.extents.length; ++i) {
+            var ex = stats.extents[i];
+            print(i + ":\t" + formatSizeBar(ex));
+        }
+        print();
+        for (var i = 0; i < stats.extents.length; ++i) {
+            printExtent(stats.extents[i], i);
+        }
+    } else {
+        printExtent(stats, "range " + stats.range);
+    }
+
+}
+
 DBCollection.prototype.pagesInRAM = function(opt) {
     var cmd = { storageDetails: this.getName(), analyze: 'pagesInRAM' };
     if (typeof(opt) == 'object') Object.extend(cmd, opt);
