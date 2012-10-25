@@ -557,7 +557,7 @@ namespace {
         }
 
         DiskStorageData extentData(0);
-        { // ensure done() is called by invoking destructor when done with the builder
+        if (chunkData.size() > 1) {
             BSONArrayBuilder chunkArrayBuilder (result.subarrayStart("chunks"));
             for (vector<DiskStorageData>::iterator it = chunkData.begin();
                  it != chunkData.end(); ++it) {
@@ -569,8 +569,11 @@ namespace {
                 chunkArrayBuilder.append(chunkBuilder.obj());
             }
             chunkArrayBuilder.doneFast(); //TODO(andrea.lattuada) can be removed when
-        }                                 //                      SERVER-7459 is fixed
-        extentData.appendToBSONObjBuilder(result, processingDeletedRecords);
+                                          //                      SERVER-7459 is fixed
+            extentData.appendToBSONObjBuilder(result, processingDeletedRecords);
+        } else {
+            chunkData[0].appendToBSONObjBuilder(result, processingDeletedRecords);
+        }
         return true;
     }
 
@@ -645,7 +648,13 @@ namespace {
             params.granularity = (params.endOfs - params.startOfs + params.numberOfChunks
                                   - 1) / params.numberOfChunks;
         }
-        params.numberOfChunks = ceilingDiv(params.length, params.granularity);
+        else if (params.granularity != 0) {
+            params.numberOfChunks = ceilingDiv(params.length, params.granularity);
+        }
+        else {
+            params.numberOfChunks = 1;
+            params.granularity = params.length;
+        }
         params.lastChunkLength = params.length -
                 (params.granularity * (params.numberOfChunks - 1));
         bool success = false;
@@ -800,11 +809,6 @@ namespace {
             return false;
         }
         params.numberOfChunks = numberOfChunksElm.number();
-
-        if (params.granularity == 0 && params.numberOfChunks == 0) {
-            errmsg = "either granularity or numberOfChunks must be specified in options";
-            return false;
-        }
 
         BSONElement characteristicFieldElm = cmdObj["characteristicField"];
         if (characteristicFieldElm.ok()) {

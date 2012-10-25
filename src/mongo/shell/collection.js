@@ -434,8 +434,9 @@ DBCollection.prototype.diskStorageStats = function(opt) {
     return this._db.runCommand(cmd);
 }
 
-DBCollection.prototype.printDiskStorageStats = function(params, detailed) {
-    print("\n\t[===occupied by BSON=== ---occupied by padding---       free                     ]   BSON%   \trecord%   \tpadding");
+DBCollection.prototype.printDiskStorageStats = function(params) {
+    print("\n\t#recs\t[===occupied by BSON=== ---occupied by padding---       free           ]" +
+          "   BSON%   \trecord%   \tpadding");
     print();
     var stats = this.diskStorageStats(params);
     if (!stats.ok) {
@@ -443,9 +444,9 @@ DBCollection.prototype.printDiskStorageStats = function(params, detailed) {
     }
     var percent = function(val) {
         return (val * 100).toFixed(2) + " %";
-    }
-    var BAR_WIDTH = 80;
-    var formatBar = function(d) {
+    };
+    var BAR_WIDTH = 70;
+    var formatSizeBar = function(data) {
         var count = 0;
         var barComponent = function(percent, str) {
             var b = "";
@@ -457,39 +458,39 @@ DBCollection.prototype.printDiskStorageStats = function(params, detailed) {
             }
             return b;
         }
-        var res = "[";
+        var bar = "[";
         res += barComponent(d.bsonBytes / d.onDiskBytes, "=");
         res += barComponent((d.recBytes - d.bsonBytes) / d.onDiskBytes, "-");
         for (; count < BAR_WIDTH; ++count) {
             res += " ";
         }
-        return res + "]";
-    }
+        bar += "]";
+        return data.numEntries.toFixed(0) + "\t" + bar + "   " +
+               percent(data.bsonBytes / data.onDiskBytes) + "\t" +
+               percent(data.recBytes / data.onDiskBytes) + "   \t" +
+               (data.recBytes / data.bsonBytes).toFixed(4);
+    };
     var printExtent = function(ex, rng) {
         print("--- extent " + rng + " ---");
-        for (var c = 0; c < ex.chunks.length; ++c) {
-            var chunk = ex.chunks[c];
-            var percentToSize = function(d) { return percent(d / chunk.onDiskBytes) }
-            print("\t" + formatBar(chunk) + "   " + percentToSize(chunk.bsonBytes) + "\t" +
-                  percentToSize(chunk.recBytes) + "   \t" +
-                  (chunk.recBytes / chunk.bsonBytes).toFixed(4));
-        }
+        print("tot\t" + formatSizeBar(ex));
         print();
-    }
+        if (ex.chunks) {
+            for (var c = 0; c < ex.chunks.length; ++c) {
+                var chunk = ex.chunks[c];
+                print(c + ":\t" + formatSizeBar(chunk));
+            }
+            print();
+        }
+    };
     if (stats.extents) {
         print("--- extent overview ---\n");
         for (var i = 0; i < stats.extents.length; ++i) {
             var ex = stats.extents[i];
-            var percentToSize = function(d) { return percent(d / ex.onDiskBytes) }
-            print(" " + i + "\t: " + formatBar(ex) + "   " + percentToSize(ex.bsonBytes) +
-                  "\t" + percentToSize(ex.recBytes) + "   \t" +
-                  (chunk.recBytes / chunk.bsonBytes).toFixed(4));
+            print(i + ":\t" + formatSizeBar(ex));
         }
         print();
-        if (detailed) {
-            for (var i = 0; i < stats.extents.length; ++i) {
-                printExtent(stats.extents[i], i);
-            }
+        for (var i = 0; i < stats.extents.length; ++i) {
+            printExtent(stats.extents[i], i);
         }
     } else {
         printExtent(stats, "range " + stats.range);
