@@ -133,13 +133,11 @@ namespace mongo {
             while ( i.more() ) {
                 BSONElement e = i.next();
                 string name = e.fieldName();
-                if ( ! name.find( "filter_" ) == 0 )
-                    continue;
+                if (name.find("filter_") == 0) {
+                    string field = name.substr(7);
+                    const char * val = e.valuestr();
 
-                string field = name.substr(7);
-                const char * val = e.valuestr();
-
-                char * temp;
+                    char * temp;
 
                     // TODO: this is how i guess if something is a number.  pretty lame right now
                     double number = strtod( val , &temp );
@@ -147,7 +145,8 @@ namespace mongo {
                         queryBuilder.append( field , number );
                     else
                         queryBuilder.append( field , val );
-               } else if (name.find("filter_arr_") == 0) {
+                }
+                else if (name.find("filter_arr_") == 0) {
                     string field = name.substr(11);
                     string val(e.valuestr());
 
