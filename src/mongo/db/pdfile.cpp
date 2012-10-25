@@ -169,7 +169,7 @@ namespace mongo {
     void ensureIdIndexForNewNs(const char *ns) {
         if ( ( strstr( ns, ".system." ) == 0 || legalClientSystemNS( ns , false ) ) &&
                 strstr( ns, FREELIST_NS ) == 0 ) {
-            log( 1 ) << "adding _id index for collection " << ns << endl;
+            LOG( 1 ) << "adding _id index for collection " << ns << endl;
             ensureHaveIdIndex( ns );
         }
     }
@@ -239,7 +239,7 @@ namespace mongo {
     }
 
     bool _userCreateNS(const char *ns, const BSONObj& options, string& err, bool *deferIdIndex) {
-        log(1) << "create collection " << ns << ' ' << options << endl;
+        LOG(1) << "create collection " << ns << ' ' << options << endl;
 
         if ( nsdetails(ns) ) {
             err = "collection already exists";
@@ -608,7 +608,7 @@ namespace mongo {
                 }
             }
 
-            if( n > 128 ) log( n < 512 ) << "warning: newExtent " << n << " scanned\n";
+            if( n > 128 ) LOG( n < 512 ) << "warning: newExtent " << n << " scanned\n";
 
             if( best ) {
                 Extent *e = best;
@@ -707,101 +707,101 @@ namespace mongo {
         return emptyLoc;
     }
 
-        bool Extent::validates(const DiskLoc diskLoc, BSONArrayBuilder* errors) {
-            bool extentOk = true;
-            if (magic != extentSignature) {
-                if (errors) {
-                    StringBuilder sb;
-                    sb << "bad extent signature " << toHex(&magic, 4)
-                       << " in extent " << diskLoc.toString();
-                    *errors << sb.str();
-                }
-                extentOk = false;
+    bool Extent::validates(const DiskLoc diskLoc, BSONArrayBuilder* errors) {
+        bool extentOk = true;
+        if (magic != extentSignature) {
+            if (errors) {
+                StringBuilder sb;
+                sb << "bad extent signature " << toHex(&magic, 4)
+                    << " in extent " << diskLoc.toString();
+                *errors << sb.str();
             }
-            if (myLoc != diskLoc) {
-                if (errors) {
-                    StringBuilder sb;
-                    sb << "extent " << diskLoc.toString()
-                       << " self-pointer is " << myLoc.toString();
-                    *errors << sb.str();
-                }
-                extentOk = false;
+            extentOk = false;
+        }
+        if (myLoc != diskLoc) {
+            if (errors) {
+                StringBuilder sb;
+                sb << "extent " << diskLoc.toString()
+                    << " self-pointer is " << myLoc.toString();
+                *errors << sb.str();
             }
-            if (firstRecord.isNull() != lastRecord.isNull()) {
-                if (errors) {
-                    StringBuilder sb;
-                    if (firstRecord.isNull()) {
-                        sb << "in extent " << diskLoc.toString()
-                           << ", firstRecord is null but lastRecord is "
-                           << lastRecord.toString();
-                    }
-                    else {
-                        sb << "in extent " << diskLoc.toString()
-                           << ", firstRecord is " << firstRecord.toString()
-                           << " but lastRecord is null";
-                    }
-                    *errors << sb.str();
+            extentOk = false;
+        }
+        if (firstRecord.isNull() != lastRecord.isNull()) {
+            if (errors) {
+                StringBuilder sb;
+                if (firstRecord.isNull()) {
+                    sb << "in extent " << diskLoc.toString()
+                        << ", firstRecord is null but lastRecord is "
+                        << lastRecord.toString();
                 }
-                extentOk = false;
-            }
-            if (length < minSize()) {
-                if (errors) {
-                    StringBuilder sb;
-                    sb << "length of extent " << diskLoc.toString()
-                       << " is " << length
-                       << ", which is less than minimum length of " << minSize();
-                    *errors << sb.str();
+                else {
+                    sb << "in extent " << diskLoc.toString()
+                        << ", firstRecord is " << firstRecord.toString()
+                        << " but lastRecord is null";
                 }
-                extentOk = false;
+                *errors << sb.str();
             }
-            return extentOk;
+            extentOk = false;
+        }
+        if (length < minSize()) {
+            if (errors) {
+                StringBuilder sb;
+                sb << "length of extent " << diskLoc.toString()
+                    << " is " << length
+                    << ", which is less than minimum length of " << minSize();
+                *errors << sb.str();
+            }
+            extentOk = false;
+        }
+        return extentOk;
+    }
+
+/*
+    Record* Extent::newRecord(int len) {
+        if( firstEmptyRegion.isNull() )8
+            return 0;
+
+        verify(len > 0);
+        int newRecSize = len + Record::HeaderSize;
+        DiskLoc newRecordLoc = firstEmptyRegion;
+        Record *r = getRecord(newRecordLoc);
+        int left = r->netLength() - len;
+        if( left < 0 ) {
+            //
+            firstEmptyRegion.Null();
+            return 0;
         }
 
-    /*
-      Record* Extent::newRecord(int len) {
-      if( firstEmptyRegion.isNull() )8
-      return 0;
+        DiskLoc nextEmpty = r->next.getNextEmpty(firstEmptyRegion);
+        r->lengthWithHeaders = newRecSize;
+        r->next.markAsFirstOrLastInExtent(this); // we're now last in the extent
+        if( !lastRecord.isNull() ) {
+            verify(getRecord(lastRecord)->next.lastInExtent()); // it was the last one
+            getRecord(lastRecord)->next.set(newRecordLoc); // until now
+            r->prev.set(lastRecord);
+        }
+        else {
+            r->prev.markAsFirstOrLastInExtent(this); // we are the first in the extent
+            verify( firstRecord.isNull() );
+            firstRecord = newRecordLoc;
+        }
+        lastRecord = newRecordLoc;
 
-      verify(len > 0);
-      int newRecSize = len + Record::HeaderSize;
-      DiskLoc newRecordLoc = firstEmptyRegion;
-      Record *r = getRecord(newRecordLoc);
-      int left = r->netLength() - len;
-      if( left < 0 ) {
-      //
-      firstEmptyRegion.Null();
-      return 0;
-      }
+        if( left < Record::HeaderSize + 32 ) {
+            firstEmptyRegion.Null();
+        }
+        else {
+            firstEmptyRegion.inc(newRecSize);
+            Record *empty = getRecord(firstEmptyRegion);
+            empty->next.set(nextEmpty); // not for empty records, unless in-use records, next and prev can be null.
+            empty->prev.Null();
+            empty->lengthWithHeaders = left;
+        }
 
-      DiskLoc nextEmpty = r->next.getNextEmpty(firstEmptyRegion);
-      r->lengthWithHeaders = newRecSize;
-      r->next.markAsFirstOrLastInExtent(this); // we're now last in the extent
-      if( !lastRecord.isNull() ) {
-      verify(getRecord(lastRecord)->next.lastInExtent()); // it was the last one
-      getRecord(lastRecord)->next.set(newRecordLoc); // until now
-      r->prev.set(lastRecord);
-      }
-      else {
-      r->prev.markAsFirstOrLastInExtent(this); // we are the first in the extent
-      verify( firstRecord.isNull() );
-      firstRecord = newRecordLoc;
-      }
-      lastRecord = newRecordLoc;
-
-      if( left < Record::HeaderSize + 32 ) {
-      firstEmptyRegion.Null();
-      }
-      else {
-      firstEmptyRegion.inc(newRecSize);
-      Record *empty = getRecord(firstEmptyRegion);
-      empty->next.set(nextEmpty); // not for empty records, unless in-use records, next and prev can be null.
-      empty->prev.Null();
-      empty->lengthWithHeaders = left;
-      }
-
-      return r;
-      }
-    */
+        return r;
+    }
+*/
 
     int Extent::maxSize() {
         int maxExtentSize = 0x7ff00000;
@@ -979,7 +979,7 @@ namespace mongo {
     }
 
     void dropCollection( const string &name, string &errmsg, BSONObjBuilder &result ) {
-        log(1) << "dropCollection: " << name << endl;
+        LOG(1) << "dropCollection: " << name << endl;
         NamespaceDetails *d = nsdetails(name.c_str());
         if( d == 0 )
             return;
@@ -998,7 +998,7 @@ namespace mongo {
             }
             verify( d->nIndexes == 0 );
         }
-        log(1) << "\t dropIndexes done" << endl;
+        LOG(1) << "\t dropIndexes done" << endl;
         result.append("ns", name.c_str());
         ClientCursor::invalidate(name.c_str());
         Top::global.collectionDropped( name );
@@ -1328,7 +1328,7 @@ namespace mongo {
     NOINLINE_DECL DiskLoc outOfSpace(const char *ns, NamespaceDetails *d, int lenWHdr, bool god, DiskLoc extentLoc) {
         DiskLoc loc;
         if ( ! d->isCapped() ) { // size capped doesn't grow
-            log(1) << "allocating new extent for " << ns << " padding:" << d->paddingFactor() << " lenWHdr: " << lenWHdr << endl;
+            LOG(1) << "allocating new extent for " << ns << " padding:" << d->paddingFactor() << " lenWHdr: " << lenWHdr << endl;
             cc().database()->allocExtent(ns, Extent::followupSize(lenWHdr, d->lastExtentSize), false, !god);
             loc = d->alloc(ns, lenWHdr, extentLoc);
             if ( loc.isNull() ) {
@@ -1690,7 +1690,7 @@ namespace mongo {
     }
 
     void dropDatabase(const std::string& db) {
-        log(1) << "dropDatabase " << db << endl;
+        LOG(1) << "dropDatabase " << db << endl;
         Lock::assertWriteLocked(db);
         Database *d = cc().database();
         verify( d );
@@ -1906,7 +1906,7 @@ namespace mongo {
         bool ok = false;
         MONGO_ASSERT_ON_EXCEPTION( ok = fo.apply( q ) );
         if ( ok )
-            log(2) << fo.op() << " file " << q.string() << endl;
+            LOG(2) << fo.op() << " file " << q.string() << endl;
         int i = 0;
         int extra = 10; // should not be necessary, this is defensive in case there are missing files
         while ( 1 ) {
@@ -1917,7 +1917,7 @@ namespace mongo {
             MONGO_ASSERT_ON_EXCEPTION( ok = fo.apply(q) );
             if ( ok ) {
                 if ( extra != 10 ) {
-                    log(1) << fo.op() << " file " << q.string() << endl;
+                    LOG(1) << fo.op() << " file " << q.string() << endl;
                     log() << "  _applyOpToDataFiles() warning: extra == " << extra << endl;
                 }
             }
@@ -1950,7 +1950,7 @@ namespace mongo {
         int nNotClosed = 0;
         for( set< string >::iterator i = dbs.begin(); i != dbs.end(); ++i ) {
             string name = *i;
-            log(2) << "DatabaseHolder::closeAll path:" << path << " name:" << name << endl;
+            LOG(2) << "DatabaseHolder::closeAll path:" << path << " name:" << name << endl;
             Client::Context ctx( name , path );
             if( !force && BackgroundOperation::inProgForDb(name.c_str()) ) {
                 log() << "WARNING: can't close database " << name << " because a bg job is in progress - try killOp command" << endl;
