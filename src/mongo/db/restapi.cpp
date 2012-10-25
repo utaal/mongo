@@ -133,20 +133,36 @@ namespace mongo {
             while ( i.more() ) {
                 BSONElement e = i.next();
                 string name = e.fieldName();
-                if ( ! name.find( "filter_" ) == 0 )
-                    continue;
+                if (name.find("filter_") == 0) {
+                    string field = name.substr(7);
+                    const char * val = e.valuestr();
 
-                string field = name.substr(7);
-                const char * val = e.valuestr();
+                    char * temp;
 
-                char * temp;
+                    // TODO: this is how i guess if something is a number.  pretty lame right now
+                    double number = strtod( val , &temp );
+                    if ( temp != val )
+                        queryBuilder.append( field , number );
+                    else
+                        queryBuilder.append( field , val );
+                }
+                else if (name.find("filter_arr_") == 0) {
+                    string field = name.substr(11);
+                    string val(e.valuestr());
 
-                // TODO: this is how i guess if something is a number.  pretty lame right now
-                double number = strtod( val , &temp );
-                if ( temp != val )
-                    queryBuilder.append( field , number );
-                else
-                    queryBuilder.append( field , val );
+                    BSONArrayBuilder arrBuilder;
+                    int commaPos = val.find(',');
+                    for (int commaPos = val.find(',');
+                         commaPos != std::string::npos;
+                         commaPos = val.find(',')) {
+
+                        arrBuilder << val.substr(0, commaPos);
+                        val.erase(0, commaPos);
+                    }
+                    arrBuilder << val;
+
+                    queryBuilder.append(field, arrBuilder.arr());
+                }
             }
 
             BSONObj query = queryBuilder.obj();
