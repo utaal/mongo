@@ -139,7 +139,10 @@ namespace mongo {
                     string val(e.valuestr());
 
                     BSONArrayBuilder arrBuilder;
-                    for (int commaPos = val.find(','); ; commaPos = val.find(',')) {
+                    for (size_t commaPos = val.find(',');
+                         val.length() > 0;
+                         commaPos = val.find(',')) {
+
                         if (commaPos == string::npos) commaPos = val.length();
 
                         // TODO: this is how i guess if something is a number.  pretty lame right now
