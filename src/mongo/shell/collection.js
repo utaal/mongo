@@ -453,6 +453,7 @@ DBCollection.prototype.printIndexStats = function(params, detailed) {
         print();
     }
 
+    // format a number rounding to three decimal figures
     var fnum = function(n) {
         return n.toFixed(3);
     }
@@ -478,8 +479,8 @@ DBCollection.prototype.printIndexStats = function(params, detailed) {
     var formatStats = function(indent, nd) {
         var out = "";
         out += indent + "bucket count\t" + nd.numBuckets
-                      + "\ton average " + fnum((1 - nd.emptyRatio.mean) * 100) + " %"
-                      + " (±" + fnum((nd.emptyRatio.stddev) * 100) + " %) full"
+                      + "\ton average " + fnum(nd.fillRatio.mean * 100) + " %"
+                      + " (±" + fnum((nd.fillRatio.stddev) * 100) + " %) full"
                       + "\t" + fnum(nd.bsonRatio.mean * 100) + " %"
                       + " (±" + fnum((nd.bsonRatio.stddev) * 100) + " %) bson keys, "
                       + fnum(nd.keyNodeRatio.mean * 100) + " %"
@@ -491,7 +492,7 @@ DBCollection.prototype.printIndexStats = function(params, detailed) {
             out += indent + "space occupied by (ratio of bucket)\n";
             out += indent + "  key nodes\t" + formatBoxPlot(nd.keyNodeRatio) + "\n";
             out += indent + "  key objs \t" + formatBoxPlot(nd.bsonRatio) + "\n";
-            out += indent + "  empty    \t" + formatBoxPlot(nd.emptyRatio) + "\n";
+            out += indent + "  used     \t" + formatBoxPlot(nd.fillRatio) + "\n";
         }
         return out;
     }
@@ -531,8 +532,8 @@ DBCollection.prototype.printIndexStats = function(params, detailed) {
                     var node = stats.expandedNodes[d + 1][k];
                     if (node.nodeInfo != undefined) {
                         children += node.nodeInfo.childNum + ": " +
-                                    ((1 - node.nodeInfo.emptyRatio) * 100).toFixed(1) + ", " +
-                                    ((1 - node.emptyRatio.mean) * 100).toFixed(1) + " | ";
+                                    (node.nodeInfo.fillRatio * 100).toFixed(1) + ", " +
+                                    (node.fillRatio.mean * 100).toFixed(1) + " | ";
                     } else {
                         children += k + ": - | ";
                     }
