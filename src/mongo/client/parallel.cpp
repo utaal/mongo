@@ -737,7 +737,7 @@ namespace mongo {
                     // It's actually okay if we set the version here, since either the
                     // manager will be verified as compatible, or if the manager doesn't
                     // exist, we don't care about version consistency
-                    log( pc ) << "needed to set remote version on connection to value "
+                    LOG( pc ) << "needed to set remote version on connection to value "
                               << "compatible with " << vinfo << endl;
                 }
             } catch ( const DBException& dbEx ) {
@@ -774,9 +774,15 @@ namespace mongo {
         ShardPtr primary;
 
         string prefix;
-        if( _totalTries > 0 ) prefix = str::stream() << "retrying (" << _totalTries << " tries)";
-        else prefix = "creating";
-        log( pc ) << prefix << " pcursor over " << _qSpec << " and " << _cInfo << endl;
+        if (MONGO_unlikely(logLevel >= pc)) {
+            if( _totalTries > 0 ) {
+                prefix = str::stream() << "retrying (" << _totalTries << " tries)";
+            }
+            else {
+                prefix = "creating";
+            }
+        }
+        LOG( pc ) << prefix << " pcursor over " << _qSpec << " and " << _cInfo << endl;
 
         set<Shard> todoStorage;
         set<Shard>& todo = todoStorage;
@@ -790,8 +796,16 @@ namespace mongo {
             // Try to get either the chunk manager or the primary shard
             config->getChunkManagerOrPrimary( ns, manager, primary );
 
-            if( manager ) vinfo = ( str::stream() << "[" << manager->getns() << " @ " << manager->getVersion().toString() << "]" );
-            else vinfo = (str::stream() << "[unsharded @ " << primary->toString() << "]" );
+            if (MONGO_unlikely(logLevel >= pc)) {
+                if (manager) {
+                    vinfo = str::stream() << "[" << manager->getns() << " @ "
+                        << manager->getVersion().toString() << "]";
+                }
+                else {
+                    vinfo = str::stream() << "[unsharded @ "
+                        << primary->toString() << "]";
+                }
+            }
 
             if( manager ) manager->getShardsForQuery( todo, specialFilter ? _cInfo.cmdFilter : _qSpec.filter() );
             else if( primary ) todo.insert( *primary );
@@ -799,7 +813,8 @@ namespace mongo {
             // Close all cursors on extra shards first, as these will be invalid
             for( map< Shard, PCMData >::iterator i = _cursorMap.begin(), end = _cursorMap.end(); i != end; ++i ){
 
-                log( pc ) << "closing cursor on shard " << i->first << " as the connection is no longer required by " << vinfo << endl;
+                LOG( pc ) << "closing cursor on shard " << i->first
+                    << " as the connection is no longer required by " << vinfo << endl;
 
                 // Force total cleanup of these connections
                 if( todo.find( i->first ) == todo.end() ) i->second.cleanup();
@@ -809,13 +824,15 @@ namespace mongo {
 
             // Don't use version to get shards here
             todo = _qShards;
-            vinfo = str::stream() << "[" << _qShards.size() << " shards specified]";
-
+            if (MONGO_unlikely(logLevel >= pc)) {
+                vinfo = str::stream() << "[" << _qShards.size() << " shards specified]";
+            }
         }
 
         verify( todo.size() );
 
-        log( pc ) << "initializing over " << todo.size() << " shards required by " << vinfo << endl;
+        LOG( pc ) << "initializing over " << todo.size()
+            << " shards required by " << vinfo << endl;
 
         // Don't retry indefinitely for whatever reason
         _totalTries++;
@@ -826,7 +843,8 @@ namespace mongo {
             const Shard& shard = *i;
             PCMData& mdata = _cursorMap[ shard ];
 
-            log( pc ) << "initializing on shard " << shard << ", current connection state is " << mdata.toBSON() << endl;
+            LOG( pc ) << "initializing on shard " << shard
+                << ", current connection state is " << mdata.toBSON() << endl;
 
             // This may be the first time connecting to this shard, if so we can get an error here
             try {
@@ -951,8 +969,9 @@ namespace mongo {
                 }
 
 
-                log( pc ) << "initialized " << ( isCommand() ? "command " : "query " ) << ( lazyInit ? "(lazily) " : "(full) " ) << "on shard " << shard << ", current connection state is " << mdata.toBSON() << endl;
-
+                LOG( pc ) << "initialized " << ( isCommand() ? "command " : "query " )
+                    << ( lazyInit ? "(lazily) " : "(full) " ) << "on shard " << shard
+                    << ", current connection state is " << mdata.toBSON() << endl;
             }
             catch( StaleConfigException& e ){
 
@@ -967,7 +986,9 @@ namespace mongo {
                 _markStaleNS( staleNS, e, forceReload, fullReload );
 
                 int logLevel = fullReload ? 0 : 1;
-                log( pc + logLevel ) << "stale config of ns " << staleNS << " during initialization, will retry with forced : " << forceReload << ", full : " << fullReload << causedBy( e ) << endl;
+                LOG( pc + logLevel ) << "stale config of ns "
+                    << staleNS << " during initialization, will retry with forced : "
+                    << forceReload << ", full : " << fullReload << causedBy( e ) << endl;
 
                 // This is somewhat strange
                 if( staleNS != ns )
@@ -1044,14 +1065,15 @@ namespace mongo {
         bool retry = false;
         map< string, StaleConfigException > staleNSExceptions;
 
-        log( pc ) << "finishing over " << _cursorMap.size() << " shards" << endl;
+        LOG( pc ) << "finishing over " << _cursorMap.size() << " shards" << endl;
 
         for( map< Shard, PCMData >::iterator i = _cursorMap.begin(), end = _cursorMap.end(); i != end; ++i ){
 
             const Shard& shard = i->first;
             PCMData& mdata = i->second;
 
-            log( pc ) << "finishing on shard " << shard << ", current connection state is " << mdata.toBSON() << endl;
+            LOG( pc ) << "finishing on shard " << shard
+                << ", current connection state is " << mdata.toBSON() << endl;
 
             // Ignore empty conns for now
             if( ! mdata.pcState ) continue;
@@ -1102,7 +1124,8 @@ namespace mongo {
                     // Finalize state
                     state->cursor->attach( state->conn.get() ); // Closes connection for us
 
-                    log( pc ) << "finished on shard " << shard << ", current connection state is " << mdata.toBSON() << endl;
+                    LOG( pc ) << "finished on shard " << shard
+                        << ", current connection state is " << mdata.toBSON() << endl;
                 }
             }
             catch( RecvStaleConfigException& e ){
@@ -1160,7 +1183,9 @@ namespace mongo {
                     _markStaleNS( staleNS, exception, forceReload, fullReload );
 
                     int logLevel = fullReload ? 0 : 1;
-                    log( pc + logLevel ) << "stale config of ns " << staleNS << " on finishing query, will retry with forced : " << forceReload << ", full : " << fullReload << causedBy( exception ) << endl;
+                    LOG( pc + logLevel ) << "stale config of ns "
+                        << staleNS << " on finishing query, will retry with forced : "
+                        << forceReload << ", full : " << fullReload << causedBy( exception ) << endl;
 
                     // This is somewhat strange
                     if( staleNS != ns )
