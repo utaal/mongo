@@ -60,7 +60,7 @@ DBCollection.prototype.help = function () {
     print("\tdb." + shortName + ".save(obj)");
     print("\tdb." + shortName + ".stats()");
     print("\tdb." + shortName + ".diskStorageStats({[extent: <num>,] [granularity: <bytes>,] ...}) - analyze record layout on disk");
-    print("\tdb." + shortName + ".pagesInRAM({[extent: <num>], granularity: <bytes>, ...}) - analyze resident memory pages");
+    print("\tdb." + shortName + ".pagesInRAM({[extent: <num>,] [granularity: <bytes>,] ...}) - analyze resident memory pages");
     print("\tdb." + shortName + ".storageSize() - includes free space allocated to this collection");
     print("\tdb." + shortName + ".totalIndexSize() - size in bytes of all the indexes");
     print("\tdb." + shortName + ".totalSize() - storage allocated for all data and indexes");
@@ -70,6 +70,7 @@ DBCollection.prototype.help = function () {
     print("\tdb." + shortName + ".getShardDistribution() - prints statistics about data distribution in the cluster");
     print("\tdb." + shortName + ".getSplitKeysForChunks( <maxChunkSize> ) - calculates split points over all chunks and returns splitter function");
     print("\tdb." + shortName + ".getDiskStorageStats({...}) - prints a summary of disk usage statistics");
+    print("\tdb." + shortName + ".getPagesInRAM({...}) - prints a summary of storage pages currently in physical memory");
     return __magicNoPrint;
 }
 
@@ -499,7 +500,7 @@ DBCollection.prototype.getDiskStorageStats = function(params) {
             print(i + ":\t" + formatSizeBar(ex));
         }
         print();
-        if (params.granularity || params.numberOfChunks) {
+        if (params && (params.granularity || params.numberOfChunks)) {
             for (var i = 0; i < stats.extents.length; ++i) {
                 printExtent(stats.extents[i], i);
             }
