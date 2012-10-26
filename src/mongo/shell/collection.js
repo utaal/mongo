@@ -438,18 +438,22 @@ DBCollection.prototype.diskStorageStats = function(opt) {
     return this._db.runCommand(cmd);
 }
 
-DBCollection.prototype.printDiskStorageStats = function(params) {
-    print("\n\t#recs\t[===occupied by BSON=== ---occupied by padding---       free           ]" +
-          "   BSON%   \trecord%   \tpadding");
-    print();
+DBCollection.prototype.getDiskStorageStats = function(params) {
     var stats = this.diskStorageStats(params);
     if (!stats.ok) {
         print("error executing storageDetails command: " + stats.errmsg);
     }
+
+    print("\n\t#recs\t[===occupied by BSON=== ---occupied by padding---       free           ]" +
+          "   BSON%   \trecord%   \tpadding");
+    print();
+
     var percent = function(val) {
         return (val * 100).toFixed(2) + " %";
     };
+
     var BAR_WIDTH = 70;
+
     var formatSizeBar = function(data) {
         var count = 0;
         var barComponent = function(percent, str) {
@@ -474,6 +478,7 @@ DBCollection.prototype.printDiskStorageStats = function(params) {
                percent(data.recBytes / data.onDiskBytes) + "   \t" +
                (data.recBytes / data.bsonBytes).toFixed(4);
     };
+
     var printExtent = function(ex, rng) {
         print("--- extent " + rng + " ---");
         print("tot\t" + formatSizeBar(ex));
@@ -486,6 +491,7 @@ DBCollection.prototype.printDiskStorageStats = function(params) {
             print();
         }
     };
+
     if (stats.extents) {
         print("--- extent overview ---\n");
         for (var i = 0; i < stats.extents.length; ++i) {
@@ -508,6 +514,15 @@ DBCollection.prototype.pagesInRAM = function(opt) {
     var cmd = { storageDetails: this.getName(), analyze: 'pagesInRAM' };
     if (typeof(opt) == 'object') Object.extend(cmd, opt);
     return this._db.runCommand(cmd);
+}
+
+DBCollection.prototype.getPagesInRAM = function(opt) {
+    var stats = this.pagesInRAM(opt);
+    if (!stats.ok) {
+        print("error executing storageDetails command: " + stats.errmsg);
+    }
+    print("TODO");
+    return false;
 }
 
 DBCollection.prototype.getShardVersion = function(){
