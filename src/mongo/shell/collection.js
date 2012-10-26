@@ -54,12 +54,13 @@ DBCollection.prototype.help = function () {
     print("\tdb." + shortName + ".group( { key : ..., initial: ..., reduce : ...[, cond: ...] } )");
     print("\tdb." + shortName + ".insert(obj)");
     print("\tdb." + shortName + ".mapReduce( mapFunction , reduceFunction , <optional params> )");
+    print("\tdb." + shortName + ".printDiskStorageStats({...}) prints a summary of disk usage stats");
     print("\tdb." + shortName + ".remove(query)");
     print("\tdb." + shortName + ".renameCollection( newName , <dropTarget> ) renames the collection.");
     print("\tdb." + shortName + ".runCommand( name , <options> ) runs a db command with the given name where the first param is the collection name");
     print("\tdb." + shortName + ".save(obj)");
     print("\tdb." + shortName + ".stats()");
-    print("\tdb." + shortName + ".diskStorageStats({[extent: <num>], granularity: <bytes>, ...}) - analyze record layout on disk");
+    print("\tdb." + shortName + ".diskStorageStats({[extent: <num>,] [granularity: <bytes>,] ...}) analyze record layout on disk");
     print("\tdb." + shortName + ".pagesInRAM({[extent: <num>], granularity: <bytes>, ...}) - analyze resident memory pages");
     print("\tdb." + shortName + ".storageSize() - includes free space allocated to this collection");
     print("\tdb." + shortName + ".totalIndexSize() - size in bytes of all the indexes");
@@ -462,10 +463,10 @@ DBCollection.prototype.printDiskStorageStats = function(params) {
             return b;
         }
         var bar = "[";
-        res += barComponent(d.bsonBytes / d.onDiskBytes, "=");
-        res += barComponent((d.recBytes - d.bsonBytes) / d.onDiskBytes, "-");
+        bar += barComponent(data.bsonBytes / data.onDiskBytes, "=");
+        bar += barComponent((data.recBytes - data.bsonBytes) / data.onDiskBytes, "-");
         for (; count < BAR_WIDTH; ++count) {
-            res += " ";
+            bar += " ";
         }
         bar += "]";
         return data.numEntries.toFixed(0) + "\t" + bar + "   " +
@@ -492,8 +493,10 @@ DBCollection.prototype.printDiskStorageStats = function(params) {
             print(i + ":\t" + formatSizeBar(ex));
         }
         print();
-        for (var i = 0; i < stats.extents.length; ++i) {
-            printExtent(stats.extents[i], i);
+        if (params.granularity || params.numberOfChunks) {
+            for (var i = 0; i < stats.extents.length; ++i) {
+                printExtent(stats.extents[i], i);
+            }
         }
     } else {
         printExtent(stats, "range " + stats.range);
