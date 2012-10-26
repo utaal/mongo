@@ -395,7 +395,7 @@ namespace {
 
         BSONObj obj = dl.obj();
         int recBytes = r->lengthWithHeaders();
-        double characteristicFieldValue;
+        double characteristicFieldValue = 0;
         bool hasCharacteristicField = extractCharacteristicFieldValue(obj, params,
                                                                       characteristicFieldValue);
         bool isLocatedBeforePrevious = dl.a() < prevDl.a();
@@ -601,7 +601,10 @@ namespace {
         int extentPages = ceilingDiv(params.endOfs - params.startOfs, int(PAGE_SIZE));
         int extentInMemCount = 0;
         { // ensure done() is called by invoking destructor when done with the builder
-            BSONArrayBuilder arr(result.subarrayStart("chunks"));
+            scoped_ptr<BSONArrayBuilder> arr;
+            if (params.numberOfChunks > 1) {
+                arr.reset(new BSONArrayBuilder(result.subarrayStart("chunks")));
+            }
             int chunkLength = params.granularity;
             for (int chunk = 0; chunk < params.numberOfChunks; ++chunk) {
                 if (chunk == params.numberOfChunks - 1) {
@@ -624,9 +627,13 @@ namespace {
                     }
                 }
 
-                arr.append(double(inMemCount) / pagesInChunk);
+                if (arr.get() != NULL) {
+                    arr->append(double(inMemCount) / pagesInChunk);
+                }
             }
-            arr.doneFast(); //TODO(andrea.lattuada) can be removed when SERVER-7459 is fixed
+            if (arr.get() != NULL) {
+                arr->doneFast(); //TODO(andrea.lattuada) can be removed when SERVER-7459 is fixed
+            }
         }
         result.append("inMem", double(extentInMemCount) / extentPages);
 

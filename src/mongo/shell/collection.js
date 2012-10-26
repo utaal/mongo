@@ -59,8 +59,8 @@ DBCollection.prototype.help = function () {
     print("\tdb." + shortName + ".runCommand( name , <options> ) runs a db command with the given name where the first param is the collection name");
     print("\tdb." + shortName + ".save(obj)");
     print("\tdb." + shortName + ".stats()");
-    print("\tdb." + shortName + ".diskStorageStats({[extent: <num>], granularity: <bytes>, ...}) - analyze record layout on disk");
-    print("\tdb." + shortName + ".pagesInRAM({[extent: <num>], granularity: <bytes>, ...}) - analyze resident memory pages");
+    print("\tdb." + shortName + ".diskStorageStats({[extent: <num>,] [granularity: <bytes>,] ...}) - analyze record layout on disk");
+    print("\tdb." + shortName + ".pagesInRAM({[extent: <num>,] [granularity: <bytes>,] ...}) - analyze resident memory pages");
     print("\tdb." + shortName + ".storageSize() - includes free space allocated to this collection");
     print("\tdb." + shortName + ".totalIndexSize() - size in bytes of all the indexes");
     print("\tdb." + shortName + ".totalSize() - storage allocated for all data and indexes");
@@ -69,6 +69,8 @@ DBCollection.prototype.help = function () {
     print("\tdb." + shortName + ".getShardVersion() - only for use with sharding");
     print("\tdb." + shortName + ".getShardDistribution() - prints statistics about data distribution in the cluster");
     print("\tdb." + shortName + ".getSplitKeysForChunks( <maxChunkSize> ) - calculates split points over all chunks and returns splitter function");
+    print("\tdb." + shortName + ".getDiskStorageStats({...}) - prints a summary of disk usage statistics");
+    print("\tdb." + shortName + ".getPagesInRAM({...}) - prints a summary of storage pages currently in physical memory");
     return __magicNoPrint;
 }
 
@@ -437,63 +439,62 @@ DBCollection.prototype.diskStorageStats = function(opt) {
     return this._db.runCommand(cmd);
 }
 
-DBCollection.prototype.printDiskStorageStats = function(params) {
-    print("\n\t#recs\t[===occupied by BSON=== ---occupied by padding---       free           ]" +
-          "   BSON%   \trecord%   \tpadding");
-    print();
+DBCollection.prototype.getDiskStorageStats = function(params) {
     var stats = this.diskStorageStats(params);
     if (!stats.ok) {
         print("error executing storageDetails command: " + stats.errmsg);
+        return;
     }
+
+    print("\n    " + sh._padStr("size", 9) + " " + sh._padStr("# recs", 10) + " " +
+          "[===occupied by BSON=== ---occupied by padding---       free           ]" + "  " +
+          sh._padStr("bson", 8) + " " + sh._padStr("rec", 8) + " " + sh._padStr("padding", 8));
+    print();
+
     var percent = function(val) {
-        return (val * 100).toFixed(2) + " %";
+        return (val * 100).toFixed(2) + "%";
     };
+
     var BAR_WIDTH = 70;
-    var formatSizeBar = function(data) {
-        var count = 0;
-        var barComponent = function(percent, str) {
-            var b = "";
-            for (var i = 0; i < BAR_WIDTH * percent; ++i) {
-                if (count < BAR_WIDTH) {
-                    b += str;
-                    ++count;
-                }
-            }
-            return b;
-        }
-        var bar = "[";
-        res += barComponent(d.bsonBytes / d.onDiskBytes, "=");
-        res += barComponent((d.recBytes - d.bsonBytes) / d.onDiskBytes, "-");
-        for (; count < BAR_WIDTH; ++count) {
-            res += " ";
-        }
-        bar += "]";
-        return data.numEntries.toFixed(0) + "\t" + bar + "   " +
-               percent(data.bsonBytes / data.onDiskBytes) + "\t" +
-               percent(data.recBytes / data.onDiskBytes) + "   \t" +
-               (data.recBytes / data.bsonBytes).toFixed(4);
+
+    var formatChunkData = function(data) {
+        var bar = sh._barFormat([
+            [data.bsonBytes / data.onDiskBytes, "="],
+            [(data.recBytes - data.bsonBytes) / data.onDiskBytes, "-"]
+        ], BAR_WIDTH);
+
+        return sh._padStr(sh._dataFormat(data.onDiskBytes), 9) + " " +
+               sh._padStr(data.numEntries.toFixed(0), 10) + " " +
+               bar + "  " +
+               sh._padStr(percent(data.bsonBytes / data.onDiskBytes), 8) + " " +
+               sh._padStr(percent(data.recBytes / data.onDiskBytes), 8) + " " +
+               sh._padStr((data.recBytes / data.bsonBytes).toFixed(4), 8);
     };
+
     var printExtent = function(ex, rng) {
         print("--- extent " + rng + " ---");
-        print("tot\t" + formatSizeBar(ex));
+        print("tot " + formatSizeBar(ex));
         print();
         if (ex.chunks) {
             for (var c = 0; c < ex.chunks.length; ++c) {
                 var chunk = ex.chunks[c];
-                print(c + ":\t" + formatSizeBar(chunk));
+                print(sh._padStr("" + c, 3) + " " + formatChunkData(chunk));
             }
             print();
         }
     };
+
     if (stats.extents) {
         print("--- extent overview ---\n");
         for (var i = 0; i < stats.extents.length; ++i) {
             var ex = stats.extents[i];
-            print(i + ":\t" + formatSizeBar(ex));
+            print(sh._padStr("" + i, 3) + " " + formatChunkData(ex));
         }
         print();
-        for (var i = 0; i < stats.extents.length; ++i) {
-            printExtent(stats.extents[i], i);
+        if (params && (params.granularity || params.numberOfChunks)) {
+            for (var i = 0; i < stats.extents.length; ++i) {
+                printExtent(stats.extents[i], i);
+            }
         }
     } else {
         printExtent(stats, "range " + stats.range);
@@ -505,6 +506,60 @@ DBCollection.prototype.pagesInRAM = function(opt) {
     var cmd = { storageDetails: this.getName(), analyze: 'pagesInRAM' };
     if (typeof(opt) == 'object') Object.extend(cmd, opt);
     return this._db.runCommand(cmd);
+}
+
+DBCollection.prototype.getPagesInRAM = function(params) {
+    var stats = this.pagesInRAM(params);
+    if (!stats.ok) {
+        print("error executing storageDetails command: " + stats.errmsg);
+        return;
+    }
+
+    var BAR_WIDTH = 70;
+    var formatExtentData = function(data) {
+        return sh._padStr("size", 8) + " " +
+               sh._barFormat([ [data.inMem, '='] ], BAR_WIDTH) + "  " +
+               sh._padStr(data.inMem.toFixed(3), 7);
+    }
+
+    var printExtent = function(ex, rng) {
+        print("--- extent " + rng + " ---");
+        print("tot " + formatExtentData(ex));
+        print();
+        if (ex.chunks) {
+            line = "\t" + sh._padStr("" + 0, 8) + "  |";
+            for (var c = 0; c < ex.chunks.length; ++c) {
+                if (c % 80 == 0 && c != 0) {
+                    print(line + "|");
+                    line = "\t" + sh._padStr("" + c, 8) + "  |";
+                }
+                var inMem = ex.chunks[c];
+                if (inMem <= .001) line += " ";
+                else if (inMem <= .25) line += ".";
+                else if (inMem <= .5) line += "*";
+                else if (inMem <= .75) line += "%";
+                else line += "#";
+            }
+            print(line + "|");
+            print();
+        }
+    }
+
+    if (stats.extents) {
+        print("--- extent overview ---\n");
+        for (var i = 0; i < stats.extents.length; ++i) {
+            var ex = stats.extents[i];
+            print(sh._padStr("" + i, 3) + " " + formatExtentData(ex));
+        }
+        print();
+        if (params && (params.granularity || params.numberOfChunks)) {
+            for (var i = 0; i < stats.extents.length; ++i) {
+                printExtent(stats.extents[i], i);
+            }
+        }
+    } else {
+        printExtent(stats, "range " + stats.range);
+    }
 }
 
 DBCollection.prototype.getShardVersion = function(){
