@@ -395,7 +395,7 @@ namespace {
 
         BSONObj obj = dl.obj();
         int recBytes = r->lengthWithHeaders();
-        double characteristicFieldValue;
+        double characteristicFieldValue = 0;
         bool hasCharacteristicField = extractCharacteristicFieldValue(obj, params,
                                                                       characteristicFieldValue);
         bool isLocatedBeforePrevious = dl.a() < prevDl.a();
