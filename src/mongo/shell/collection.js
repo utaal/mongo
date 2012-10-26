@@ -52,6 +52,7 @@ DBCollection.prototype.help = function () {
     print("\tdb." + shortName + ".getDB() get DB object associated with collection");
     print("\tdb." + shortName + ".getIndexes()");
     print("\tdb." + shortName + ".group( { key : ..., initial: ..., reduce : ...[, cond: ...] } )");
+    print("\tdb." + shortName + ".indexStats({expandNodes: [<expanded child numbers>}, <detailed: t/f>) - output aggregate/per-depth btree bucket stats");
     print("\tdb." + shortName + ".insert(obj)");
     print("\tdb." + shortName + ".mapReduce( mapFunction , reduceFunction , <optional params> )");
     print("\tdb." + shortName + ".remove(query)");
@@ -64,6 +65,7 @@ DBCollection.prototype.help = function () {
     print("\tdb." + shortName + ".totalSize() - storage allocated for all data and indexes");
     print("\tdb." + shortName + ".update(query, object[, upsert_bool, multi_bool]) - instead of two flags, you can pass an object with fields: upsert, multi");
     print("\tdb." + shortName + ".validate( <full> ) - SLOW");;
+    print("\tdb." + shortName + ".getIndexStats({expandNodes: [<expanded child numbers>}, <detailed: t/f>) - prints aggregate/per-depth btree bucket stats");
     print("\tdb." + shortName + ".getShardVersion() - only for use with sharding");
     print("\tdb." + shortName + ".getShardDistribution() - prints statistics about data distribution in the cluster");
     print("\tdb." + shortName + ".getSplitKeysForChunks( <maxChunkSize> ) - calculates split points over all chunks and returns splitter function");
@@ -435,7 +437,7 @@ DBCollection.prototype.indexStats = function(params) {
     return this._db.runCommand( cmd );
 }
 
-DBCollection.prototype.printIndexStats = function(params, detailed) {
+DBCollection.prototype.getIndexStats = function(params, detailed) {
     var stats = this.indexStats(params);
     if (!stats.ok) {
         print("error executing indexStats command: " + stats.errmsg);
