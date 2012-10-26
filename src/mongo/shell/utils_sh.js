@@ -23,6 +23,37 @@ sh._dataFormat = function( bytes ){
    return Math.floor( ( Math.floor( bytes / ( 1024 * 1024 ) ) / 1024 ) * 100 ) / 100 + "Gb"
 }
 
+sh._padStr = function(str, width, right) {
+    for (var i = width - str.length; i > 0; --i) {
+        if (right) {
+            str = str + ' ';
+        } else {
+            str = ' ' + str;
+        }
+    }
+    return str;
+}
+
+// expects data of the form [[ratio, symbol], ...] where ratio is between 0. and 1. and
+// symbol is a string of length 1
+// e.g. [[.3, "="], [.5, '-']]
+sh._barFormat = function(data, width) {
+    var remaining = width;
+    var res = "[";
+    for (var i = 0; i < data.length; ++i) {
+        for (var x = 0; x < data[i][0] * width; ++x) {
+            if (remaining-- > 0) {
+                res += data[i][1];
+            }
+        }
+    }
+    for (; remaining > 0; --remaining) {
+        res += " ";
+    }
+    res += "]";
+    return res;
+}
+
 sh._collRE = function( coll ){
    return RegExp( "^" + RegExp.escape(coll + "") + "-.*" )
 }

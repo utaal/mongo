@@ -443,10 +443,12 @@ DBCollection.prototype.getDiskStorageStats = function(params) {
     var stats = this.diskStorageStats(params);
     if (!stats.ok) {
         print("error executing storageDetails command: " + stats.errmsg);
+        return;
     }
 
-    print("\n\t#recs\t[===occupied by BSON=== ---occupied by padding---       free           ]" +
-          "   BSON%   \trecord%   \tpadding");
+    print("\n\tsize  \t#recs" +
+          "\t[===occupied by BSON=== ---occupied by padding---       free           ]" +
+          "   BSON%, record%, padding");
     print();
 
     var percent = function(val) {
@@ -456,28 +458,17 @@ DBCollection.prototype.getDiskStorageStats = function(params) {
     var BAR_WIDTH = 70;
 
     var formatSizeBar = function(data) {
-        var count = 0;
-        var barComponent = function(percent, str) {
-            var b = "";
-            for (var i = 0; i < BAR_WIDTH * percent; ++i) {
-                if (count < BAR_WIDTH) {
-                    b += str;
-                    ++count;
-                }
-            }
-            return b;
-        }
-        var bar = "[";
-        bar += barComponent(data.bsonBytes / data.onDiskBytes, "=");
-        bar += barComponent((data.recBytes - data.bsonBytes) / data.onDiskBytes, "-");
-        for (; count < BAR_WIDTH; ++count) {
-            bar += " ";
-        }
-        bar += "]";
-        return data.numEntries.toFixed(0) + "\t" + bar + "   " +
-               percent(data.bsonBytes / data.onDiskBytes) + "\t" +
-               percent(data.recBytes / data.onDiskBytes) + "   \t" +
-               (data.recBytes / data.bsonBytes).toFixed(4);
+        var bar = sh._barFormat([
+            [data.bsonBytes / data.onDiskBytes, "="],
+            [(data.recBytes - data.bsonBytes) / data.onDiskBytes, "-"]
+        ], BAR_WIDTH);
+
+        return sh._padStr(sh._dataFormat(data.onDiskBytes), 11) + " " +
+               sh._padStr(data.numEntries.toFixed(0), 10) + " " +
+               bar + "  " +
+               sh._padStr(percent(data.bsonBytes / data.onDiskBytes), 8) + " " +
+               sh._padStr(percent(data.recBytes / data.onDiskBytes), 8) + " " +
+               sh._padStr((data.recBytes / data.bsonBytes).toFixed(4)) + " ";
     };
 
     var printExtent = function(ex, rng) {
@@ -521,9 +512,14 @@ DBCollection.prototype.getPagesInRAM = function(opt) {
     var stats = this.pagesInRAM(opt);
     if (!stats.ok) {
         print("error executing storageDetails command: " + stats.errmsg);
+        return;
     }
-    print("TODO");
-    return false;
+    if (stats.extents) {
+        print("--- extent overview ---\n");
+        for (var i = 0; i < stats.extents.length; ++i) {
+
+        }
+    }
 }
 
 DBCollection.prototype.getShardVersion = function(){
