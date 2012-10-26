@@ -86,6 +86,15 @@ namespace mongo {
         virtual ~AreaStats() {
         }
 
+        /**
+         * add the provided values as a sample to the computed statistics for this tree / level /
+         * subtree
+         *
+         * @param keyCount number of keys in the bucket
+         * @param usedKeyCount number of used (non-empty) keys in the bucket
+         * @param bucket current bucket
+         * @param keyNodeBytes size (number of bytes) of a KeyNode
+         */
         template<class Version>
         void addStats(int keyCount, int usedKeyCount, const BtreeBucket<Version>* bucket,
                       int keyNodeBytes) {
@@ -305,11 +314,16 @@ namespace mongo {
             killCurrentOp.checkForInterrupt();
 
             if (parentIsExpanded) {
+                // stats for the children of this bucket have been added in the recursive calls,
+                // avoid including the current bucket in the stats for its subtree
                 expandedAncestors.pop_back();
             }
 
+
+            // add the stats for the current bucket to the aggregates for all its ancestors and
+            // the entire tree
             for (unsigned int d = 0; d < expandedAncestors.size(); ++d) {
-                AreaStats& nodeStats = _stats.nodeAt(d, expandedAncestors.at(d));
+                AreaStats& nodeStats = _stats.nodeAt(d, expandedAncestors[d]);
                 nodeStats.addStats(keyCount, usedKeyCount, bucket, sizeof(_KeyNode));
             }
             _stats.wholeTree.addStats(keyCount, usedKeyCount, bucket, sizeof(_KeyNode));
@@ -334,6 +348,7 @@ namespace mongo {
                 _stats.nodeAt(depth, childNum).nodeInfo = nodeInfo;
             }
 
+            // add the stats for this bucket to the aggregate for a certain depth
             while (_stats.perLevel.size() < depth + 1)
                 _stats.perLevel.push_back(AreaStats());
             dassert(_stats.perLevel.size() > depth);
