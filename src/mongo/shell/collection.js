@@ -446,39 +446,39 @@ DBCollection.prototype.getDiskStorageStats = function(params) {
         return;
     }
 
-    print("\n\tsize  \t#recs" +
-          "\t[===occupied by BSON=== ---occupied by padding---       free           ]" +
-          "   BSON%, record%, padding");
+    print("\n    " + sh._padStr("size", 9) + " " + sh._padStr("# recs", 10) + " " +
+          "[===occupied by BSON=== ---occupied by padding---       free           ]" + "  " +
+          sh._padStr("bson", 8) + " " + sh._padStr("rec", 8) + " " + sh._padStr("padding", 8));
     print();
 
     var percent = function(val) {
-        return (val * 100).toFixed(2) + " %";
+        return (val * 100).toFixed(2) + "%";
     };
 
     var BAR_WIDTH = 70;
 
-    var formatSizeBar = function(data) {
+    var formatChunkData = function(data) {
         var bar = sh._barFormat([
             [data.bsonBytes / data.onDiskBytes, "="],
             [(data.recBytes - data.bsonBytes) / data.onDiskBytes, "-"]
         ], BAR_WIDTH);
 
-        return sh._padStr(sh._dataFormat(data.onDiskBytes), 11) + " " +
+        return sh._padStr(sh._dataFormat(data.onDiskBytes), 9) + " " +
                sh._padStr(data.numEntries.toFixed(0), 10) + " " +
                bar + "  " +
                sh._padStr(percent(data.bsonBytes / data.onDiskBytes), 8) + " " +
                sh._padStr(percent(data.recBytes / data.onDiskBytes), 8) + " " +
-               sh._padStr((data.recBytes / data.bsonBytes).toFixed(4)) + " ";
+               sh._padStr((data.recBytes / data.bsonBytes).toFixed(4), 8);
     };
 
     var printExtent = function(ex, rng) {
         print("--- extent " + rng + " ---");
-        print("tot\t" + formatSizeBar(ex));
+        print("tot " + formatSizeBar(ex));
         print();
         if (ex.chunks) {
             for (var c = 0; c < ex.chunks.length; ++c) {
                 var chunk = ex.chunks[c];
-                print(c + ":\t" + formatSizeBar(chunk));
+                print(sh._padStr("" + c, 3) + " " + formatChunkData(chunk));
             }
             print();
         }
@@ -488,7 +488,7 @@ DBCollection.prototype.getDiskStorageStats = function(params) {
         print("--- extent overview ---\n");
         for (var i = 0; i < stats.extents.length; ++i) {
             var ex = stats.extents[i];
-            print(i + ":\t" + formatSizeBar(ex));
+            print(sh._padStr("" + i, 3) + " " + formatChunkData(ex));
         }
         print();
         if (params && (params.granularity || params.numberOfChunks)) {
@@ -508,17 +508,57 @@ DBCollection.prototype.pagesInRAM = function(opt) {
     return this._db.runCommand(cmd);
 }
 
-DBCollection.prototype.getPagesInRAM = function(opt) {
-    var stats = this.pagesInRAM(opt);
+DBCollection.prototype.getPagesInRAM = function(params) {
+    var stats = this.pagesInRAM(params);
     if (!stats.ok) {
         print("error executing storageDetails command: " + stats.errmsg);
         return;
     }
+
+    var BAR_WIDTH = 70;
+    var formatExtentData = function(data) {
+        return sh._padStr("size", 8) + " " +
+               sh._barFormat([ [data.inMem, '='] ], BAR_WIDTH) + "  " +
+               sh._padStr(data.inMem.toFixed(3), 7);
+    }
+
+    var printExtent = function(ex, rng) {
+        print("--- extent " + rng + " ---");
+        print("tot " + formatExtentData(ex));
+        print();
+        if (ex.chunks) {
+            line = "\t" + sh._padStr("" + 0, 8) + "  |";
+            for (var c = 0; c < ex.chunks.length; ++c) {
+                if (c % 80 == 0 && c != 0) {
+                    print(line + "|");
+                    line = "\t" + sh._padStr("" + c, 8) + "  |";
+                }
+                var inMem = ex.chunks[c];
+                if (inMem <= .001) line += " ";
+                else if (inMem <= .25) line += ".";
+                else if (inMem <= .5) line += "*";
+                else if (inMem <= .75) line += "%";
+                else line += "#";
+            }
+            print(line + "|");
+            print();
+        }
+    }
+
     if (stats.extents) {
         print("--- extent overview ---\n");
         for (var i = 0; i < stats.extents.length; ++i) {
-
+            var ex = stats.extents[i];
+            print(sh._padStr("" + i, 3) + " " + formatExtentData(ex));
         }
+        print();
+        if (params && (params.granularity || params.numberOfChunks)) {
+            for (var i = 0; i < stats.extents.length; ++i) {
+                printExtent(stats.extents[i], i);
+            }
+        }
+    } else {
+        printExtent(stats, "range " + stats.range);
     }
 }
 
