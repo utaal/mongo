@@ -444,6 +444,7 @@ DBCollection.prototype.getIndexStats = function(params, detailed) {
     var stats = this.indexStats(params);
     if (!stats.ok) {
         print("error executing indexStats command: " + stats.errmsg);
+        return;
     }
 
     print("-- index \"" + stats.name + "\" --");

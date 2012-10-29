@@ -419,6 +419,10 @@ namespace mongo {
 
     /**
      * This command provides detailed and aggreate information and statistics for a btree. 
+     * Stats are aggregated for the entire tree, per-depth and, if requested through the expandNodes
+     * option, per-subtree.
+     * The entire btree is walked depth-first on every call. This command takes a read lock and may
+     * be slow for large indexes if the underlying extents arent't already in physical memory.
      */
     class IndexStatsCmd : public Command {
     public:
