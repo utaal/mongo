@@ -2,7 +2,7 @@
  * collection.storageDetails({...}) command
  */
 
-/*    Copyright 2009 10gen Inc.
+/*    Copyright 2012 10gen Inc.
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ namespace mongo {
 
 namespace {
 
-    static size_t PAGE_SIZE = 4 << 10;
+    static size_t PAGE_BYTES = 4 << 10;
 
     // Helper classes and functions
 
@@ -595,22 +595,25 @@ namespace {
                           BSONObjBuilder& result) {
 
         verify(sizeof(char) == 1);
-        result.append("pageBytes", int(PAGE_SIZE));
+        result.append("pageBytes", int(PAGE_BYTES));
         char* startAddr = (char*) ex + params.startOfs;
 
-        int extentPages = ceilingDiv(params.endOfs - params.startOfs, int(PAGE_SIZE));
-        int extentInMemCount = 0;
+        int extentPages = ceilingDiv(params.endOfs - params.startOfs, int(PAGE_BYTES));
+        int extentInMemCount = 0; // number of pages in memory for the entire extent
         { // ensure done() is called by invoking destructor when done with the builder
             scoped_ptr<BSONArrayBuilder> arr;
+            int chunkBytes = params.granularity;
+
             if (params.numberOfChunks > 1) {
+                result.append("chunkBytes", chunkBytes);
                 arr.reset(new BSONArrayBuilder(result.subarrayStart("chunks")));
             }
-            int chunkLength = params.granularity;
+
             for (int chunk = 0; chunk < params.numberOfChunks; ++chunk) {
                 if (chunk == params.numberOfChunks - 1) {
-                    chunkLength = params.lastChunkLength;
+                    chunkBytes = params.lastChunkLength;
                 }
-                int pagesInChunk = ceilingDiv(chunkLength, PAGE_SIZE);
+                int pagesInChunk = ceilingDiv(chunkBytes, PAGE_BYTES);
 
                 char* firstPageAddr = startAddr + (chunk * params.granularity);
                 vector<bool> isInMem(pagesInChunk);
@@ -635,6 +638,7 @@ namespace {
                 arr->doneFast(); //TODO(andrea.lattuada) can be removed when SERVER-7459 is fixed
             }
         }
+
         result.append("inMem", double(extentInMemCount) / extentPages);
 
         return true;

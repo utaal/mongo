@@ -23,8 +23,14 @@ sh._dataFormat = function( bytes ){
    return Math.floor( ( Math.floor( bytes / ( 1024 * 1024 ) ) / 1024 ) * 100 ) / 100 + "Gb"
 }
 
-sh._padStr = function(str, width, right) {
-    for (var i = width - str.length; i > 0; --i) {
+// Pads a string with whitespace so it becomes (at least) _length_ characters long. No truncation is
+// performed if the string is already longer than _length_.
+// @param str string to be padded
+// @param length minimum length of the returned string
+// @param right if falsy add leading whitespace, otherwise add trailing whitespace
+// @retrun the padded string
+sh._padStr = function(str, length, right) {
+    for (var i = length - str.length; i > 0; --i) {
         if (right) {
             str = str + ' ';
         } else {
@@ -34,9 +40,12 @@ sh._padStr = function(str, width, right) {
     return str;
 }
 
-// expects data of the form [[ratio, symbol], ...] where ratio is between 0. and 1. and
-// symbol is a string of length 1
-// e.g. [[.3, "="], [.5, '-']]
+// Formats a simple stacked horizontal histogram bar in the shell.
+// @param data array of the form [[ratio, symbol], ...] where ratio is between 0. and 1. and
+//             symbol is a string of length 1
+// @param width width of the bar (excluding the left and right delimiters [ ] )
+// e.g. _barFormat([[.3, "="], [.5, '-']], 80) returns
+//      "[========================----------------------------------------                ]"
 sh._barFormat = function(data, width) {
     var remaining = width;
     var res = "[";

@@ -433,12 +433,18 @@ DBCollection.prototype.validate = function(full) {
     return res;
 }
 
+/**
+ * Invokes the storageDetails command to provide aggregate and (if requested) detailed information
+ * regarding the layout of records and deleted records in the collection extents.
+ * getDiskStorageStats provides a human-readable summary of the command output
+ */
 DBCollection.prototype.diskStorageStats = function(opt) {
     var cmd = { storageDetails: this.getName(), analyze: 'diskStorage' };
     if (typeof(opt) == 'object') Object.extend(cmd, opt);
     return this._db.runCommand(cmd);
 }
 
+// Refer to diskStorageStats
 DBCollection.prototype.getDiskStorageStats = function(params) {
     var stats = this.diskStorageStats(params);
     if (!stats.ok) {
@@ -502,12 +508,18 @@ DBCollection.prototype.getDiskStorageStats = function(params) {
 
 }
 
+/**
+ * Invokes the storageDetails command to report the percentage of virtual memory pages of the
+ * collection storage currently in physical memory (RAM).
+ * getPagesInRAM provides a human-readable summary of the command output
+ */
 DBCollection.prototype.pagesInRAM = function(opt) {
     var cmd = { storageDetails: this.getName(), analyze: 'pagesInRAM' };
     if (typeof(opt) == 'object') Object.extend(cmd, opt);
     return this._db.runCommand(cmd);
 }
 
+// Refer to pagesInRAM
 DBCollection.prototype.getPagesInRAM = function(params) {
     var stats = this.pagesInRAM(params);
     if (!stats.ok) {
@@ -527,11 +539,16 @@ DBCollection.prototype.getPagesInRAM = function(params) {
         print("tot " + formatExtentData(ex));
         print();
         if (ex.chunks) {
+            print("\tchunks, percentage of pages in memory (< .1% : ' ', <25% : '.', " +
+                  "<50% : '*', <75% : '%', >75% : '#')");
+            print();
+            print("\t" + sh._padStr("offset", 8) + "  |chunks...| (each chunk is " +
+                  sh._dataFormat(ex.chunkBytes) + ")");
             line = "\t" + sh._padStr("" + 0, 8) + "  |";
             for (var c = 0; c < ex.chunks.length; ++c) {
                 if (c % 80 == 0 && c != 0) {
                     print(line + "|");
-                    line = "\t" + sh._padStr("" + c, 8) + "  |";
+                    line = "\t" + sh._padStr("" + sh._dataFormat(ex.chunkBytes * c), 8) + "  |";
                 }
                 var inMem = ex.chunks[c];
                 if (inMem <= .001) line += " ";
@@ -556,6 +573,10 @@ DBCollection.prototype.getPagesInRAM = function(params) {
             for (var i = 0; i < stats.extents.length; ++i) {
                 printExtent(stats.extents[i], i);
             }
+        } else {
+            print("use getPagesInRAM({granularity: _bytes_}) or " +
+                  "getPagesInRAM({numberOfChunks: _num_} for details");
+            print("use pagesInRAM(...) for json output, same parameters apply");
         }
     } else {
         printExtent(stats, "range " + stats.range);
