@@ -527,11 +527,16 @@ DBCollection.prototype.getPagesInRAM = function(params) {
         print("tot " + formatExtentData(ex));
         print();
         if (ex.chunks) {
+            print("\tchunks, percentage of pages in memory (< .1% : ' ', <25% : '.', " +
+                  "<50% : '*', <75% : '%', >75% : '#')");
+            print();
+            print("\t" + sh._padStr("offset", 8) + "  |chunks...| (each chunk is " +
+                  sh._dataFormat(ex.chunkBytes) + ")");
             line = "\t" + sh._padStr("" + 0, 8) + "  |";
             for (var c = 0; c < ex.chunks.length; ++c) {
                 if (c % 80 == 0 && c != 0) {
                     print(line + "|");
-                    line = "\t" + sh._padStr("" + c, 8) + "  |";
+                    line = "\t" + sh._padStr("" + sh._dataFormat(ex.chunkBytes * c), 8) + "  |";
                 }
                 var inMem = ex.chunks[c];
                 if (inMem <= .001) line += " ";
@@ -556,6 +561,10 @@ DBCollection.prototype.getPagesInRAM = function(params) {
             for (var i = 0; i < stats.extents.length; ++i) {
                 printExtent(stats.extents[i], i);
             }
+        } else {
+            print("use getPagesInRAM({granularity: _bytes_}) or " +
+                  "getPagesInRAM({numberOfChunks: _num_} for details");
+            print("use pagesInRAM(...) for json output, same parameters apply");
         }
     } else {
         printExtent(stats, "range " + stats.range);
