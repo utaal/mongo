@@ -584,7 +584,9 @@ namespace {
      * The output has the form:
      *     { pageBytes: <system page size>,
      *       inMem: <ratio of pages in memory for the entire extent>,
-     *       chunks: [ ... ]
+     * (opt) chunks: [ ... ] (only present if either params.granularity or numberOfChunks is not
+     *                        zero and there exist more than one chunk for this extent)
+     * (opt) chunkBytes: <size of each chunk>
      *     }
      *
      * The nth element in the chunks array is the ratio of pages in memory for the nth chunk.
