@@ -31,10 +31,12 @@ _ disallow system* manipulations from the database.
 #include <boost/filesystem/operations.hpp>
 #include <list>
 
+#include "mongo/base/counter.h"
 #include "mongo/db/pdfile_private.h"
 #include "mongo/db/background.h"
 #include "mongo/db/btree.h"
 #include "mongo/db/btreebuilder.h"
+#include "mongo/db/commands/server_status.h"
 #include "mongo/db/compact.h"
 #include "mongo/db/curop-inl.h"
 #include "mongo/db/db.h"
@@ -59,19 +61,6 @@ namespace mongo {
 
     BOOST_STATIC_ASSERT( sizeof(Extent)-4 == 48+128 );
     BOOST_STATIC_ASSERT( sizeof(DataFileHeader)-4 == 8192 );
-
-    void printMemInfo( const char * where ) {
-        cout << "mem info: ";
-        if ( where )
-            cout << where << " ";
-        ProcessInfo pi;
-        if ( ! pi.supported() ) {
-            cout << " not supported" << endl;
-            return;
-        }
-
-        cout << "vsize: " << pi.getVirtualMemorySize() << " resident: " << pi.getResidentSize() << " mapped: " << ( MemoryMappedFile::totalMappedLength() / ( 1024 * 1024 ) ) << endl;
-    }
 
     bool isValidNS( const StringData& ns ) {
         // TODO: should check for invalid characters
@@ -608,7 +597,7 @@ namespace mongo {
                 }
             }
 
-            if( n > 128 ) LOG( n < 512 ) << "warning: newExtent " << n << " scanned\n";
+            if( n > 128 ) LOG( n < 512 ? 1 : 0 ) << "warning: newExtent " << n << " scanned\n";
 
             if( best ) {
                 Extent *e = best;
@@ -1096,6 +1085,8 @@ namespace mongo {
         }
     }
 
+    Counter64 moveCounter;
+    ServerStatusMetricField<Counter64> moveCounterDisplay( "record.moves", false, &moveCounter );
 
     /** Note: if the object shrinks a lot, we don't free up space, we leave extra at end of the record.
      */
@@ -1137,6 +1128,7 @@ namespace mongo {
 
         if ( toupdate->netLength() < objNew.objsize() ) {
             // doesn't fit.  reallocate -----------------------------------------------------
+            moveCounter.increment();
             uassert( 10003 , "failing update: objects in a capped ns cannot grow", !(d && d->isCapped()));
             d->paddingTooSmall();
             deleteRecord(ns, toupdate, dl);
@@ -1325,18 +1317,18 @@ namespace mongo {
         }
     }
 
-    NOINLINE_DECL DiskLoc outOfSpace(const char *ns, NamespaceDetails *d, int lenWHdr, bool god, DiskLoc extentLoc) {
+    NOINLINE_DECL DiskLoc outOfSpace(const char* ns, NamespaceDetails* d, int lenWHdr, bool god) {
         DiskLoc loc;
         if ( ! d->isCapped() ) { // size capped doesn't grow
             LOG(1) << "allocating new extent for " << ns << " padding:" << d->paddingFactor() << " lenWHdr: " << lenWHdr << endl;
             cc().database()->allocExtent(ns, Extent::followupSize(lenWHdr, d->lastExtentSize), false, !god);
-            loc = d->alloc(ns, lenWHdr, extentLoc);
+            loc = d->alloc(ns, lenWHdr);
             if ( loc.isNull() ) {
                 log() << "warning: alloc() failed after allocating new extent. lenWHdr: " << lenWHdr << " last extent size:" << d->lastExtentSize << "; trying again\n";
                 for ( int z=0; z<10 && lenWHdr > d->lastExtentSize; z++ ) {
                     log() << "try #" << z << endl;
                     cc().database()->allocExtent(ns, Extent::followupSize(lenWHdr, d->lastExtentSize), false, !god);
-                    loc = d->alloc(ns, lenWHdr, extentLoc);
+                    loc = d->alloc(ns, lenWHdr);
                     if ( ! loc.isNull() )
                         break;
                 }
@@ -1348,11 +1340,10 @@ namespace mongo {
     /** used by insert and also compact
       * @return null loc if out of space 
       */
-    DiskLoc allocateSpaceForANewRecord(const char *ns, NamespaceDetails *d, int lenWHdr, bool god) {
-        DiskLoc extentLoc;
-        DiskLoc loc = d->alloc(ns, lenWHdr, extentLoc);
+    DiskLoc allocateSpaceForANewRecord(const char* ns, NamespaceDetails* d, int lenWHdr, bool god) {
+        DiskLoc loc = d->alloc(ns, lenWHdr);
         if ( loc.isNull() ) {
-            loc = outOfSpace(ns, d, lenWHdr, god, extentLoc);
+            loc = outOfSpace(ns, d, lenWHdr, god);
         }
         return loc;
     }
@@ -1633,9 +1624,8 @@ namespace mongo {
         RARELY verify( d == nsdetails(ns) );
         DEV verify( d == nsdetails(ns) );
 
-        DiskLoc extentLoc;
         int lenWHdr = len + Record::HeaderSize;
-        DiskLoc loc = d->alloc(ns, lenWHdr, extentLoc);
+        DiskLoc loc = d->alloc(ns, lenWHdr);
         verify( !loc.isNull() );
 
         Record *r = loc.rec();
