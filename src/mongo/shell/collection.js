@@ -433,12 +433,18 @@ DBCollection.prototype.validate = function(full) {
     return res;
 }
 
+/**
+ * Invokes the storageDetails command to provide aggregate and (if requested) detailed information
+ * regarding the layout of records and deleted records in the collection extents.
+ * getDiskStorageStats provides a human-readable summary of the command output
+ */
 DBCollection.prototype.diskStorageStats = function(opt) {
     var cmd = { storageDetails: this.getName(), analyze: 'diskStorage' };
     if (typeof(opt) == 'object') Object.extend(cmd, opt);
     return this._db.runCommand(cmd);
 }
 
+// Refer to diskStorageStats
 DBCollection.prototype.getDiskStorageStats = function(params) {
     var stats = this.diskStorageStats(params);
     if (!stats.ok) {
@@ -502,12 +508,18 @@ DBCollection.prototype.getDiskStorageStats = function(params) {
 
 }
 
+/**
+ * Invokes the storageDetails command to report the percentage of virtual memory pages of the
+ * collection storage currently in physical memory (RAM).
+ * getPagesInRAM provides a human-readable summary of the command output
+ */
 DBCollection.prototype.pagesInRAM = function(opt) {
     var cmd = { storageDetails: this.getName(), analyze: 'pagesInRAM' };
     if (typeof(opt) == 'object') Object.extend(cmd, opt);
     return this._db.runCommand(cmd);
 }
 
+// Refer to pagesInRAM
 DBCollection.prototype.getPagesInRAM = function(params) {
     var stats = this.pagesInRAM(params);
     if (!stats.ok) {
