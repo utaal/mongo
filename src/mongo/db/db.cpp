@@ -26,6 +26,7 @@
 #include "mongo/db/client.h"
 #include "mongo/db/clientcursor.h"
 #include "mongo/db/cmdline.h"
+#include "mongo/db/commands/server_status.h"
 #include "mongo/db/d_concurrency.h"
 #include "mongo/db/d_globals.h"
 #include "mongo/db/db.h"
@@ -291,7 +292,7 @@ namespace mongo {
     static void repairDatabasesAndCheckVersion() {
         //        LastError * le = lastError.get( true );
         Client::GodScope gs;
-        log(1) << "enter repairDatabases (to check pdfile version #)" << endl;
+        LOG(1) << "enter repairDatabases (to check pdfile version #)" << endl;
 
         //verify(checkNsFilesOnLoad);
         checkNsFilesOnLoad = false; // we are mainly just checking the header - don't scan the whole .ns file for every db here.
@@ -301,7 +302,7 @@ namespace mongo {
         getDatabaseNames( dbNames );
         for ( vector< string >::iterator i = dbNames.begin(); i != dbNames.end(); ++i ) {
             string dbName = *i;
-            log(1) << "\t" << dbName << endl;
+            LOG(1) << "\t" << dbName << endl;
             Client::Context ctx( dbName );
             MongoDataFile *p = cc().database()->getFile( 0 );
             DataFileHeader *h = p->getHeader();
@@ -337,7 +338,7 @@ namespace mongo {
             }
         }
 
-        log(1) << "done repairDatabases" << endl;
+        LOG(1) << "done repairDatabases" << endl;
 
         if ( shouldRepairDatabases ) {
             log() << "finished checking dbs" << endl;
@@ -400,9 +401,20 @@ namespace mongo {
     /**
      * does background async flushes of mmapped files
      */
-    class DataFileSync : public BackgroundJob {
+    class DataFileSync : public BackgroundJob , public ServerStatusSection {
     public:
+        DataFileSync() 
+            : ServerStatusSection( "backgroundFlushing" ),
+              _total_time( 0 ),
+              _flushes( 0 ),
+              _last() {
+        }
+
+        virtual bool includeByDefault() const { return true; }
+        virtual bool adminOnly() const { return false; }
+        
         string name() const { return "DataFileSync"; }
+
         void run() {
             Client::initThread( name().c_str() );
             if( cmdLine.syncdelay == 0 )
@@ -410,7 +422,7 @@ namespace mongo {
             else if( cmdLine.syncdelay == 1 )
                 log() << "--syncdelay 1" << endl;
             else if( cmdLine.syncdelay != 60 )
-                log(1) << "--syncdelay " << cmdLine.syncdelay << endl;
+                LOG(1) << "--syncdelay " << cmdLine.syncdelay << endl;
             int time_flushing = 0;
             while ( ! inShutdown() ) {
                 _diaglog.flush();
@@ -431,7 +443,7 @@ namespace mongo {
                 int numFiles = MemoryMappedFile::flushAll( true );
                 time_flushing = (int) (jsTime() - start);
 
-                globalFlushCounters.flushed(time_flushing);
+                _flushed(time_flushing);
 
                 if( logLevel >= 1 || time_flushing >= 10000 ) {
                     log() << "flushing mmaps took " << time_flushing << "ms " << " for " << numFiles << " files" << endl;
@@ -439,7 +451,50 @@ namespace mongo {
             }
         }
 
+        BSONObj generateSection( const BSONElement& configElement, bool userIsAdmin ) const {
+            BSONObjBuilder b;
+            b.appendNumber( "flushes" , _flushes );
+            b.appendNumber( "total_ms" , _total_time );
+            b.appendNumber( "average_ms" , (_flushes ? (_total_time / double(_flushes)) : 0.0) );
+            b.appendNumber( "last_ms" , _last_time );
+            b.append("last_finished", _last);
+            return b.obj();
+        }
+
+    private:
+
+        void _flushed(int ms) {
+            _flushes++;
+            _total_time += ms;
+            _last_time = ms;
+            _last = jsTime();
+        }
+        
+        long long _total_time;
+        long long _flushes;
+        int _last_time;
+        Date_t _last;
+
+
     } dataFileSync;
+
+    namespace {
+        class MemJournalServerStatusMetric : public ServerStatusMetric {
+        public:
+            MemJournalServerStatusMetric() : ServerStatusMetric( ".mem.mapped", false ) {}
+            virtual void appendAtLeaf( BSONObjBuilder& b ) const {
+                int m = static_cast<int>(MemoryMappedFile::totalMappedLength() / ( 1024 * 1024 ));
+                b.appendNumber( "mapped" , m );
+                
+                if ( cmdLine.dur ) {
+                    m *= 2;
+                    b.appendNumber( "mappedWithJournal" , m );
+                }
+           
+            }
+        } memJournalServerStatusMetric;
+    }
+                
 
     const char * jsInterruptCallback() {
         // should be safe to interrupt in js code, even if we have a write lock
