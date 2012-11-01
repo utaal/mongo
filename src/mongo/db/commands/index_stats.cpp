@@ -470,7 +470,6 @@ namespace mongo {
      * Each element of the inner array has the same structure as 'overall' in the description above:
      * it includes the aggregate stats for all the nodes in the subtree excluding the current
      * bucket.
-     *
      * It also contains an additional field 'nodeInfo' representing information for the current
      * node:
      *     { childNum: <i so that this is the (i + 1)-th child of the parent node>
