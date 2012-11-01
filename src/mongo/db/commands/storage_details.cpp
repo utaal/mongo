@@ -323,6 +323,7 @@ namespace {
         bool hasValue = false;
         if (elem.type() == jstOID) {
             value = double(elem.OID().asTimeT());
+            hasValue = true;
         }
         else if (elem.isNumber()) {
             value = elem.numberDouble();
