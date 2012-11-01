@@ -28,6 +28,11 @@
  */
 namespace mongo {
 
+    void* remapPrivateView(void *oldPrivateAddr) {
+        log() << "remapPrivateView called in mongos, aborting" << endl;
+        fassertFailed(16462);
+    }
+
     void ShardingConnectionHook::onHandedOut( DBClientBase * conn ) {
         if( _shardedConnections ){
             ClientInfo::get()->addShard( conn->getServerAddress() );
@@ -89,7 +94,7 @@ namespace mongo {
                 log() << "command denied: " << cmdObj.toString() << endl;
                 return false;
             }
-            log( 2 ) << "command: " << cmdObj << endl;
+            LOG( 2 ) << "command: " << cmdObj << endl;
         }
 
         if (!client.getAuthenticationInfo()->isAuthorized(dbname)) {

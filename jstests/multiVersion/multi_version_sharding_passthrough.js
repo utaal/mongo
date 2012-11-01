@@ -22,6 +22,7 @@ var testsToIgnore = [ /dbadmin/,
                       /mr_auth/,
                       /queryoptimizera/,
                       /regex_limit/, // Not compatible with mongod before 2.3
+                      /fail_point/,
                       /features2/ ]
 
 var testsThatAreBuggy = [ /apply_ops1/,
@@ -210,6 +211,7 @@ var v22Only = [ /^all3$/,
                 /^count9$/,
                 /^counta$/,
                 /^countb$/,
+                /^countc$/,
                 /^coveredIndex3$/,
                 /^coveredIndex4$/,
                 /^coveredIndex5$/,

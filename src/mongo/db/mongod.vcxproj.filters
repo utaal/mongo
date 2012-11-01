@@ -370,9 +370,6 @@
     <ClCompile Include="..\util\md5.cpp">
       <Filter>util\Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="modules\mms.cpp">
-      <Filter>db\modules</Filter>
-    </ClCompile>
     <ClCompile Include="..\util\mmap.cpp">
       <Filter>util\Source Files</Filter>
     </ClCompile>
@@ -985,6 +982,33 @@
     </ClCompile>
     <ClCompile Include="keypattern.cpp">
       <Filter>db\Source Files\e to n</Filter>
+    </ClCompile>
+    <ClCompile Include="geo\hash.cpp">
+      <Filter>db\geo</Filter>
+    </ClCompile>
+    <ClCompile Include="geo\shapes.cpp">
+      <Filter>db\geo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\util\net\ssl_manager.cpp">
+      <Filter>util\net</Filter>
+    </ClCompile>
+    <ClCompile Include="..\s\cluster_constants.cpp">
+      <Filter>s</Filter>
+    </ClCompile>
+    <ClCompile Include="..\util\elapsed_tracker.cpp">
+      <Filter>util\Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="auth\action_type.cpp">
+      <Filter>db\auth</Filter>
+    </ClCompile>
+    <ClCompile Include="auth\mongo_authentication_session.cpp">
+      <Filter>db\auth</Filter>
+    </ClCompile>
+    <ClCompile Include="btree_stats.cpp">
+      <Filter>db\Source Files\a to d</Filter>
+    </ClCompile>
+    <ClCompile Include="commands\server_status.cpp">
+      <Filter>db\commands</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -1838,6 +1862,66 @@
     </ClInclude>
     <ClInclude Include="keypattern.h">
       <Filter>db\Header Files\e to n</Filter>
+    </ClInclude>
+    <ClInclude Include="..\platform\cstdint.h">
+      <Filter>platform</Filter>
+    </ClInclude>
+    <ClInclude Include="geo\hash.h">
+      <Filter>db\geo</Filter>
+    </ClInclude>
+    <ClInclude Include="geo\shapes.h">
+      <Filter>db\geo</Filter>
+    </ClInclude>
+    <ClInclude Include="..\util\net\ssl_manager.h">
+      <Filter>util\net</Filter>
+    </ClInclude>
+    <ClInclude Include="memconcept.h">
+      <Filter>db\Header Files\e to n</Filter>
+    </ClInclude>
+    <ClInclude Include="..\s\cluster_constants.h">
+      <Filter>s</Filter>
+    </ClInclude>
+    <ClInclude Include="..\s\config.h">
+      <Filter>s</Filter>
+    </ClInclude>
+    <ClInclude Include="..\s\d_chunk_manager.h">
+      <Filter>s</Filter>
+    </ClInclude>
+    <ClInclude Include="..\s\grid.h">
+      <Filter>s</Filter>
+    </ClInclude>
+    <ClInclude Include="..\util\elapsed_tracker.h">
+      <Filter>util\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="auth\action_type.h">
+      <Filter>db\auth</Filter>
+    </ClInclude>
+    <ClInclude Include="..\base\counter.h">
+      <Filter>base</Filter>
+    </ClInclude>
+    <ClInclude Include="auth\authentication_session.h">
+      <Filter>db\auth</Filter>
+    </ClInclude>
+    <ClInclude Include="auth\mongo_authentication_session.h">
+      <Filter>db\auth</Filter>
+    </ClInclude>
+    <ClInclude Include="btree_stats.h">
+      <Filter>db\Header Files\a to d</Filter>
+    </ClInclude>
+    <ClInclude Include="commands\fsync.h">
+      <Filter>db\commands</Filter>
+    </ClInclude>
+    <ClInclude Include="commands\mr.h">
+      <Filter>db\commands</Filter>
+    </ClInclude>
+    <ClInclude Include="commands\server_status.h">
+      <Filter>db\commands</Filter>
+    </ClInclude>
+    <ClInclude Include="dur.h">
+      <Filter>db\Header Files\a to d</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\third_party\boost\boost\smart_ptr\scoped_ptr.hpp">
+      <Filter>Boost</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

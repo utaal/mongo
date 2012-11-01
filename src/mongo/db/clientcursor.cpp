@@ -30,6 +30,7 @@
 
 #include "mongo/client/dbclientinterface.h"
 #include "mongo/db/commands.h"
+#include "mongo/db/commands/server_status.h"
 #include "mongo/db/db.h"
 #include "mongo/db/introspect.h"
 #include "mongo/db/kill_current_op.h"
@@ -46,7 +47,7 @@ namespace mongo {
     boost::recursive_mutex& ClientCursor::ccmutex( *(new boost::recursive_mutex()) );
     long long ClientCursor::numberTimedOut = 0;
 
-    void aboutToDeleteForSharding( const Database* db , const DiskLoc& dl ); // from s/d_logic.h
+    void aboutToDeleteForSharding( const Database* db, const NamespaceDetails* nsd, const DiskLoc& dl ); // from s/d_logic.h
 
     /*static*/ void ClientCursor::assertNoCursors() {
         recursive_scoped_lock lock(ccmutex);
@@ -212,7 +213,7 @@ namespace mongo {
     }
 
     /* must call this on a delete so we clean up the cursors. */
-    void ClientCursor::aboutToDelete(const DiskLoc& dl) {
+    void ClientCursor::aboutToDelete(const NamespaceDetails* nsd, const DiskLoc& dl) {
         NoPageFaultsAllowed npfa;
 
         recursive_scoped_lock lock(ccmutex);
@@ -220,7 +221,7 @@ namespace mongo {
         Database *db = cc().database();
         verify(db);
 
-        aboutToDeleteForSharding( db , dl );
+        aboutToDeleteForSharding( db, nsd, dl );
 
         CCByLoc& bl = db->ccByLoc;
         CCByLoc::iterator j = bl.lower_bound(ByLocKey::min(dl));
@@ -294,7 +295,6 @@ namespace mongo {
             cc->updateLocation();
         }
     }
-    void aboutToDelete(const DiskLoc& dl) { ClientCursor::aboutToDelete(dl); }
 
     void ClientCursor::LockedIterator::deleteAndAdvance() {
         ClientCursor *cc = current();
@@ -720,6 +720,21 @@ namespace mongo {
             return true;
         }
     } cmdCursorInfo;
+
+    class CursorServerStats : public ServerStatusSection {
+    public:
+
+        CursorServerStats() : ServerStatusSection( "cursors" ){}
+        virtual bool includeByDefault() const { return true; }
+        virtual bool adminOnly() const { return false; }
+
+        BSONObj generateSection( const BSONElement& configElement, bool userIsAdmin ) const {
+            BSONObjBuilder b;
+            ClientCursor::appendStats( b );
+            return b.obj();
+        }
+
+    } cursorServerStats;
 
     struct Mem { 
         Mem() { res = virt = mapped = 0; }

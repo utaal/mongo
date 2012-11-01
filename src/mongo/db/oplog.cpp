@@ -30,6 +30,7 @@
 #include "ops/delete.h"
 #include "mongo/db/instance.h"
 #include "mongo/db/repl/bgsync.h"
+#include "mongo/util/elapsed_tracker.h"
 
 namespace mongo {
 
@@ -223,7 +224,7 @@ namespace mongo {
         append_O_Obj(r->data(), partial, obj);
 
         if ( logLevel >= 6 ) {
-            log( 6 ) << "logOp:" << BSONObj::make(r) << endl;
+            LOG( 6 ) << "logOp:" << BSONObj::make(r) << endl;
         }
     }
 

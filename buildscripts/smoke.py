@@ -42,6 +42,7 @@ import re
 import shutil
 import shlex
 import socket
+import stat
 from subprocess import (Popen,
                         PIPE,
                         call)
@@ -403,6 +404,7 @@ def runTest(test):
         f = open(keyFile, 'r')
         keyFileData = re.sub(r'\s', '', f.read()) # Remove all whitespace
         f.close()
+        os.chmod(keyFile, stat.S_IRUSR | stat.S_IWUSR)
     else:
         keyFileData = None
 
@@ -862,7 +864,16 @@ def main():
 
     if options.ignore_files != None :
         ignore_patt = re.compile( options.ignore_files )
-        tests = filter( lambda x : ignore_patt.search( x[0] ) == None, tests )
+        print "Ignoring files with pattern: ", ignore_patt
+	
+        def ignore_test( test ):
+            if ignore_patt.search( test[0] ) != None:
+                print "Ignoring test ", test[0]
+                return False
+            else:
+                return True
+
+        tests = filter( ignore_test, tests )
 
     if not tests:
         print "warning: no tests specified"

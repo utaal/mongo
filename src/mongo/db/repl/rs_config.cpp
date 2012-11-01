@@ -148,7 +148,7 @@ namespace mongo {
         mchk(_id >= 0 && _id <= 255);
         mchk(priority >= 0 && priority <= 1000);
         mchk(votes <= 100); // votes >= 0 because it is unsigned
-        uassert(13419, "priorities must be between 0.0 and 100.0", priority >= 0.0 && priority <= 100.0);
+        uassert(13419, "priorities must be between 0.0 and 1000", priority >= 0.0 && priority <= 1000);
         uassert(13437, "slaveDelay requires priority be zero", slaveDelay == 0 || priority == 0);
         uassert(13438, "bad slaveDelay value", slaveDelay >= 0 && slaveDelay <= 3600 * 24 * 366);
         uassert(13439, "priority must be 0 when hidden=true", priority == 0 || !hidden);
@@ -696,14 +696,14 @@ namespace mongo {
         }
         catch( DBException& e) {
             version = v;
-            log(level) << "replSet load config couldn't get from " << h.toString() << ' ' << e.what() << rsLog;
+            LOG(level) << "replSet load config couldn't get from " << h.toString() << ' ' << e.what() << rsLog;
             return;
         }
 
         from(cfg);
         checkRsConfig();
         _ok = true;
-        log(level) << "replSet load config ok from " << (h.isSelf() ? "self" : h.toString()) << rsLog;
+        LOG(level) << "replSet load config ok from " << (h.isSelf() ? "self" : h.toString()) << rsLog;
         _constructed = true;
     }
 

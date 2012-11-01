@@ -51,6 +51,7 @@
 #include "../util/startup_test.h"
 #include "../util/processinfo.h"
 #include "../util/ramlog.h"
+#include "mongo/util/elapsed_tracker.h"
 
 #include "shard.h"
 #include "d_logic.h"
@@ -306,7 +307,7 @@ namespace mongo {
         }
 
         void done() {
-            Lock::DBRead lk( _ns );
+            Lock::DBWrite lk( _ns );
 
             {
                 scoped_spinlock lk( _trackerLocks );
@@ -758,7 +759,9 @@ namespace mongo {
         migrateFromStatus.logOp( opstr , ns , obj , patt );
     }
 
-    void aboutToDeleteForSharding( const Database* db , const DiskLoc& dl ) {
+    void aboutToDeleteForSharding( const Database* db, const NamespaceDetails* nsd, const DiskLoc& dl ) {
+        if ( nsd->isCapped() )
+            return;
         migrateFromStatus.aboutToDelete( db , dl );
     }
 
@@ -934,6 +937,7 @@ namespace mongo {
             configServer.logChange( "moveChunk.start" , ns , chunkInfo );
 
             ShardChunkVersion maxVersion;
+            ShardChunkVersion startingVersion;
             string myOldShard;
             {
                 scoped_ptr<ScopedDbConnection> conn(
@@ -1002,10 +1006,10 @@ namespace mongo {
                 // it's possible this shard will be *at* zero version from a previous migrate and
                 // no refresh will be done
                 // TODO: Make this less fragile
-                ShardChunkVersion shardVersion = maxVersion;
-                shardingState.trySetVersion( ns , shardVersion /* will return updated */ );
+                startingVersion = maxVersion;
+                shardingState.trySetVersion( ns , startingVersion /* will return updated */ );
 
-                log() << "moveChunk request accepted at version " << shardVersion << migrateLog;
+                log() << "moveChunk request accepted at version " << startingVersion << migrateLog;
             }
 
             timing.done(2);
@@ -1088,7 +1092,7 @@ namespace mongo {
 
                 conn->done();
 
-                log(0) << "moveChunk data transfer progress: " << res << " my mem used: " << migrateFromStatus.mbUsed() << migrateLog;
+                LOG(0) << "moveChunk data transfer progress: " << res << " my mem used: " << migrateFromStatus.mbUsed() << migrateLog;
 
                 if ( ! ok || res["state"].String() == "fail" ) {
                     warning() << "moveChunk error transferring data caused migration abort: " << res << migrateLog;
@@ -1125,8 +1129,7 @@ namespace mongo {
                 // 5.a
                 // we're under the collection lock here, so no other migrate can change maxVersion or ShardChunkManager state
                 migrateFromStatus.setInCriticalSection( true );
-                ShardChunkVersion currVersion = maxVersion;
-                ShardChunkVersion myVersion = currVersion;
+                ShardChunkVersion myVersion = maxVersion;
                 myVersion.incMajor();
 
                 {
@@ -1159,7 +1162,7 @@ namespace mongo {
                     catch( DBException& e ){
                         errmsg = str::stream() << "moveChunk could not contact to: shard " << toShard.getConnString() << " to commit transfer" << causedBy( e );
                         warning() << errmsg << endl;
-                        return false;
+                        ok = false;
                     }
 
                     connTo->done();
@@ -1169,11 +1172,11 @@ namespace mongo {
                             Lock::DBWrite lk( ns );
 
                             // revert the chunk manager back to the state before "forgetting" about the chunk
-                            shardingState.undoDonateChunk( ns , min , max , currVersion );
+                            shardingState.undoDonateChunk( ns , min , max , startingVersion );
                         }
 
                         log() << "moveChunk migrate commit not accepted by TO-shard: " << res
-                              << " resetting shard version to: " << currVersion << migrateLog;
+                              << " resetting shard version to: " << startingVersion << migrateLog;
 
                         errmsg = "_recvChunkCommit failed!";
                         result.append( "cause" , res );

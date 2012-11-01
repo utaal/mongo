@@ -87,7 +87,7 @@ namespace mongo {
         // ofs 386 (16)
         int _systemFlags; // things that the system sets/cares about
     public:
-        DiskLoc capExtent;
+        DiskLoc capExtent; // the "current" extent we're writing too for a capped collection
         DiskLoc capFirstNewRecord;
         unsigned short dataFileVersion;       // NamespaceDetails version.  So we can do backward compatibility in the future. See filever.h
         unsigned short indexFileVersion;
@@ -362,7 +362,7 @@ namespace mongo {
         DiskLoc allocWillBeAt(const char *ns, int lenToAlloc);
 
         /* allocate a new record.  lenToAlloc includes headers. */
-        DiskLoc alloc(const char *ns, int lenToAlloc, DiskLoc& extentLoc);
+        DiskLoc alloc(const char* ns, int lenToAlloc);
 
         /* add a given record to the deleted chains for this NS */
         void addDeletedRec(DeletedRecord *d, DiskLoc dloc);
@@ -475,8 +475,13 @@ namespace mongo {
          *
          * @param planPolicy - A policy for selecting query plans - see queryoptimizercursor.h
          *
-         * @param simpleEqualityMatch - Set to true for certain simple queries - see
-         * queryoptimizer.cpp.
+         * @param requestMatcher - Set to true to request that the returned Cursor provide a
+         * matcher().  If false, the cursor's matcher() may return NULL if the Cursor can perform
+         * accurate query matching internally using a non Matcher mechanism.  One case where a
+         * Matcher might be requested even though not strictly necessary to select matching
+         * documents is if metadata about matches may be requested using MatchDetails.  NOTE This is
+         * a hint that the Cursor use a Matcher, but the hint may be ignored.  In some cases the
+         * returned cursor may not provide a matcher even if 'requestMatcher' is true.
          *
          * @param parsedQuery - Additional query parameters, as from a client query request.
          *
@@ -501,7 +506,7 @@ namespace mongo {
                                             const BSONObj &order = BSONObj(),
                                             const QueryPlanSelectionPolicy &planPolicy =
                                             QueryPlanSelectionPolicy::any(),
-                                            bool *simpleEqualityMatch = 0,
+                                            bool requestMatcher = true,
                                             const shared_ptr<const ParsedQuery> &parsedQuery =
                                             shared_ptr<const ParsedQuery>(),
                                             bool requireOrder = true,

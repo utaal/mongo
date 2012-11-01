@@ -17,27 +17,27 @@
 */
 
 #include "pch.h"
-#include "../util/net/message.h"
-#include "../util/stringutils.h"
-#include "../client/connpool.h"
-#include "../client/model.h"
-#include "mongo/client/dbclientcursor.h"
-#include "../db/pdfile.h"
-#include "../db/cmdline.h"
 
-
-#include "chunk.h"
-#include "config.h"
-#include "grid.h"
-#include "server.h"
 #include "pcrecpp.h"
+
+#include "mongo/client/connpool.h"
+#include "mongo/client/dbclientcursor.h"
+#include "mongo/client/model.h"
+#include "mongo/db/pdfile.h"
+#include "mongo/db/cmdline.h"
+#include "mongo/s/chunk.h"
+#include "mongo/s/cluster_constants.h"
+#include "mongo/s/config.h"
+#include "mongo/s/grid.h"
+#include "mongo/s/server.h"
+#include "mongo/util/net/message.h"
+#include "mongo/util/stringutils.h"
 
 namespace mongo {
 
     int ConfigServer::VERSION = 3;
     Shard Shard::EMPTY;
 
-    string ShardNS::shard = "config.shards";
     string ShardNS::database = "config.databases";
     string ShardNS::collection = "config.collections";
     string ShardNS::chunk = "config.chunks";
@@ -45,9 +45,6 @@ namespace mongo {
 
     string ShardNS::mongos = "config.mongos";
     string ShardNS::settings = "config.settings";
-
-    BSONField<bool>      ShardFields::draining("draining");
-    BSONField<long long> ShardFields::maxSize ("maxSize");
 
     OID serverID;
 
@@ -809,7 +806,7 @@ namespace mongo {
         }
 
         if ( up == 1 ) {
-            log( LL_WARNING ) << "only 1 config server reachable, continuing" << endl;
+            LOG( LL_WARNING ) << "only 1 config server reachable, continuing" << endl;
             return true;
         }
 
@@ -829,7 +826,7 @@ namespace mongo {
 
             stringstream ss;
             ss << "config servers " << _config[firstGood] << " and " << _config[i] << " differ";
-            log( LL_WARNING ) << ss.str() << endl;
+            LOG( LL_WARNING ) << ss.str() << endl;
             if ( tries <= 1 ) {
                 ss << "\n" << c1 << "\t" << c2 << "\n" << d1 << "\t" << d2;
                 errmsg = ss.str();
@@ -849,7 +846,7 @@ namespace mongo {
         if ( checkConsistency ) {
             string errmsg;
             if ( ! checkConfigServersConsistent( errmsg ) ) {
-                log( LL_ERROR ) << "config servers not in sync! " << errmsg << warnings;
+                LOG( LL_ERROR ) << "config servers not in sync! " << errmsg << warnings;
                 return false;
             }
         }
@@ -897,7 +894,7 @@ namespace mongo {
             uassert( 10189 ,  "should only have 1 thing in config.version" , ! c->more() );
         }
         else {
-            if ( conn.count( ShardNS::shard ) || conn.count( ShardNS::database ) ) {
+            if ( conn.count(ConfigNS::shard) || conn.count( ShardNS::database ) ) {
                 version = 1;
             }
         }
@@ -954,7 +951,7 @@ namespace mongo {
                                       BSON( "ns" << 1 << "shard" << 1 << "min" << 1 ),
                                       true );
             conn->get()->ensureIndex( ShardNS::chunk, BSON( "ns" << 1 << "lastmod" << 1 ), true );
-            conn->get()->ensureIndex( ShardNS::shard, BSON( "host" << 1 ), true );
+            conn->get()->ensureIndex(ConfigNS::shard, BSON(ShardFields::host() << 1), true);
 
             conn->done();
         }
@@ -1030,14 +1027,15 @@ namespace mongo {
         try {
             Shard s = Shard::lookupRSName(monitor->getName());
             if (s == Shard::EMPTY) {
-                log(1) << "replicaSetChange: shard not found for set: " << monitor->getServerAddress() << endl;
+                LOG(1) << "replicaSetChange: shard not found for set: " << monitor->getServerAddress() << endl;
                 return;
             }
             scoped_ptr<ScopedDbConnection> conn( ScopedDbConnection::getScopedDbConnection(
                     configServer.getConnectionString().toString(), 30.0 ) );
-            conn->get()->update( ShardNS::shard,
-                                 BSON( "_id" << s.getName() ),
-                                 BSON( "$set" << BSON( "host" << monitor->getServerAddress() ) ) );
+            conn->get()->update(ConfigNS::shard,
+                                BSON(ShardFields::name(s.getName())),
+                                BSON("$set" <<
+                                     BSON(ShardFields::host(monitor->getServerAddress()))));
             conn->done();
         }
         catch ( DBException & ) {
