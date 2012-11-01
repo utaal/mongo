@@ -423,6 +423,69 @@ namespace mongo {
      * option, per-subtree.
      * The entire btree is walked depth-first on every call. This command takes a read lock and may
      * be slow for large indexes if the underlying extents arent't already in physical memory.
+     *
+     * The output has the form:
+     *     { name: <index name>,
+     *       version: <index version (0 or 1),
+     *       isIdKey: <true if this is the default _id index>,
+     *       keyPattern: <bson object describing the key pattern>,
+     *       storageNs: <namespace of the index's underlying storage>,
+     *       bucketBodyBytes: <bytes available for keynodes and bson objects in the bucket's body>,
+     *       depth: <index depth (root excluded)>
+     *       overall: { (statistics for the entire tree)
+     *           numBuckets: <number of buckets (samples)>
+     *           keyCount: { (stats about the number of keys in a bucket)
+     *               count: <number of samples>,
+     *               mean: <mean>
+     *    (optional) stddev: <standard deviation>
+     *    (optional) min: <minimum value (number of keys for the bucket that has the least)>
+     *    (optional) max: <maximum value (number of keys for the bucket that has the most)>
+     *    (optional) quantiles: {
+     *                   0.01: <1st percentile>, 0.02: ..., 0.09: ..., 0.25: <1st quartile>,
+     *                   0.5: <median>, 0.75: <3rd quartile>, 0.91: ..., 0.98: ..., 0.99: ...
+     *               }
+     *    (optional fields are only present if there are enough samples to compute sensible
+     *     estimates)
+     *           }
+     *           usedKeyCount: <stats about the number of used keys in a bucket>
+     *               (same structure as keyCount)
+     *           bsonRatio: <stats about how much of the bucket body is occupied by bson objects>
+     *               (same structure as keyCount)
+     *           keyNodeRatio: <stats about how much of the bucket body is occupied by KeyNodes>
+     *               (same structure as keyCount)
+     *           fillRatio: <stats about how full is the bucket body (bson objects + KeyNodes)>
+     *               (same structure as keyCount)
+     *       },
+     *       perLevel: [ (statistics aggregated per depth)
+     *           (one element with the same structure as 'overall' for each btree level,
+     *            the first refers to the root)
+     *       ]
+     *     }
+     *
+     * If 'expandNodes: [array]' was specified in the parameters, an additional field named
+     * 'expandedNodes' is included in the output. It contains two nested arrays, such that the
+     * n-th element of the outer array contains stats for nodes at depth n (root is included) and
+     * the i-th element (0-based) of the inner array at depth n contains stats for the subtree
+     * rooted at the i-th child of the expanend node at depth (n - 1).
+     * Each element of the inner array has the same structure as 'overall' in the description above:
+     * it includes the aggregate stats for all the nodes in the subtree excluding the current
+     * bucket.
+     *
+     * It also contains an additional field 'nodeInfo' representing information for the current
+     * node:
+     *     { childNum: <i so that this is the (i + 1)-th child of the parent node>
+     *       keyCount: <number of keys in this bucket>
+     *       usedKeyCount: <number of non-empty KeyNodes>
+     *       diskLoc: { (bson representation of the disk location for this bucket)
+     *           file: <num>
+     *           offset: <bytes>
+     *       }
+     *       depth: <depth of this bucket, root is at depth 0>
+     *       fillRatio: <a value between 0 and 1 representing how full this bucket is>
+     *       firstKey: <bson object containing the value for the first key>
+     *       lastKey: <bson object containing the value for the last key>
+     *     }
+     *
      */
     class IndexStatsCmd : public Command {
     public:
