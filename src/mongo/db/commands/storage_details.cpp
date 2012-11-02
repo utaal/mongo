@@ -584,6 +584,7 @@ namespace {
      *
      * The output has the form:
      *     { pageBytes: <system page size>,
+     *       onDiskBytes: <size of the extent>,
      *       inMem: <ratio of pages in memory for the entire extent>,
      * (opt) chunks: [ ... ] (only present if either params.granularity or numberOfChunks is not
      *                        zero and there exist more than one chunk for this extent)
@@ -595,10 +596,11 @@ namespace {
      * @return true on success, false on failure (partial output may still be present)
      */
     bool analyzePagesInRAM(const Extent* ex, const AnalyzeParams& params, string& errmsg,
-                          BSONObjBuilder& result) {
+                           BSONObjBuilder& result) {
 
         verify(sizeof(char) == 1);
         result.append("pageBytes", int(PAGE_BYTES));
+        result.append("onDiskBytes", ex->length - Extent::HeaderSize());
         char* startAddr = (char*) ex + params.startOfs;
 
         int extentPages = ceilingDiv(params.endOfs - params.startOfs, int(PAGE_BYTES));
