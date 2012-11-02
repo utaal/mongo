@@ -209,6 +209,7 @@ add_option( "use-system-boost", "use system version of boost libraries", 0, True
 add_option( "use-system-snappy", "use system version of snappy library", 0, True )
 
 add_option( "use-system-sm", "use system version of spidermonkey library", 0, True )
+add_option( "use-system-v8", "use system version of v8 library", 0, True )
 
 add_option( "use-system-all" , "use all system libraries", 0 , True )
 
@@ -285,6 +286,7 @@ env = Environment( BUILD_DIR=variantDir,
                    MODULE_LIBDEPS_MONGOD=[],
                    MODULE_LIBDEPS_MONGOS=[],
                    MODULE_LIBDEPS_MONGOSHELL=[],
+                   MODULETEST_ALIAS='moduletests',
                    MODULETEST_LIST='#build/moduletests.txt',
                    MSVS_ARCH=msarch ,
                    PYTHON=utils.find_python(),
@@ -734,10 +736,6 @@ if nix:
         print( "removing precompiled headers" )
         os.unlink( env.File("$BUILD_DIR/mongo/pch.h.$GCHSUFFIX").abspath ) # gcc uses the file if it exists
 
-if usev8:
-    env.Prepend( EXTRACPPPATH=["#/../v8/include/"] )
-    env.Prepend( EXTRALIBPATH=["#/../v8/"] )
-
 if usesm:
     env.Append( CPPDEFINES=["JS_C_STRINGS_ARE_UTF8"] )
 
@@ -814,7 +812,7 @@ def doConfigure(myenv):
     if solaris:
         conf.CheckLib( "nsl" )
 
-    if usev8:
+    if usev8 and use_system_version_of_library("v8"):
         if debugBuild:
             v8_lib_choices = ["v8_g", "v8"]
         else:
@@ -1101,8 +1099,9 @@ Export("testEnv")
 Export("has_option use_system_version_of_library")
 Export("installSetup")
 Export("usesm usev8")
-Export("darwin windows solaris linux nix")
+Export("darwin windows solaris linux freebsd nix")
 Export('module_sconscripts')
+Export("debugBuild")
 
 env.SConscript('src/SConscript', variant_dir='$BUILD_DIR', duplicate=False)
 env.SConscript('src/SConscript.client', variant_dir='$BUILD_DIR/client_build', duplicate=False)
@@ -1123,4 +1122,4 @@ def clean_old_dist_builds(env, target, source):
 env.Alias("dist_clean", [], [clean_old_dist_builds])
 env.AlwaysBuild("dist_clean")
 
-env.Alias('all', ['core', 'tools', 'clientTests', 'test', 'unittests'])
+env.Alias('all', ['core', 'tools', 'clientTests', 'test', 'unittests', 'moduletests'])
