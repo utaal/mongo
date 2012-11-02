@@ -212,14 +212,15 @@ env.CppUnitTest('bson_template_evaluator_test', ['scripting/bson_template_evalua
                 LIBDEPS=['bson_template_evaluator'])
 
 if usesm:
-    env.StaticLibrary('scripting', scripting_common_files + ['scripting/engine_spidermonkey.cpp'],
+    env.StaticLibrary('scripting', scripting_common_files + ['scripting/engine_spidermonkey.cpp',
+                                                             'scripting/sm_db.cpp'],
                       LIBDEPS=['$BUILD_DIR/third_party/js-1.7/js', 'bson_template_evaluator'])
 elif usev8:
     env.StaticLibrary('scripting', scripting_common_files + ['scripting/engine_v8.cpp',
                                                              'scripting/v8_db.cpp',
                                                              'scripting/v8_utils.cpp',
                                                              'scripting/v8_wrapper.cpp'],
-                       LIBDEPS=['bson_template_evaluator'])
+                       LIBDEPS=['bson_template_evaluator', '$BUILD_DIR/third_party/shim_v8'])
 else:
     env.StaticLibrary('scripting', scripting_common_files + ['scripting/engine_none.cpp'],
                       LIBDEPS=['bson_template_evaluator'])
@@ -398,18 +399,16 @@ env.StaticLibrary("defaultversion", "s/default_version.cpp")
 env.StaticLibrary("geometry", [ "db/geo/hash.cpp", "db/geo/shapes.cpp", ], LIBDEPS = [ "bson" ])
 env.StaticLibrary("geojson", [ "db/geo/geojsonparser.cpp", ],
                   LIBDEPS = [ "bson",
-                              '$BUILD_DIR/third_party/gflags-2.0/gflags',
                               '$BUILD_DIR/third_party/s2/s2' ])
 
 env.CppUnitTest("hash_test", [ "db/geo/hash_test.cpp" ], LIBDEPS = ["geometry" ])
-# Short-term build fix.
-#env.CppUnitTest("geojsonparser_test", [ "db/geo/geojsonparser_test.cpp" ], LIBDEPS = ["geojson"])
+env.CppUnitTest("geojsonparser_test", [ "db/geo/geojsonparser_test.cpp" ], LIBDEPS = ["geojson"])
 
 env.StaticLibrary("serveronly", serverOnlyFiles,
                   LIBDEPS=["coreshard",
                            "dbcmdline",
                            "defaultversion",
-                           #"geojson",
+                           # "geojson",
                            "geometry",
                            '$BUILD_DIR/third_party/shim_snappy'])
 
