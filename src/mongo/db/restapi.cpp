@@ -133,20 +133,44 @@ namespace mongo {
             while ( i.more() ) {
                 BSONElement e = i.next();
                 string name = e.fieldName();
-                if ( ! name.find( "filter_" ) == 0 )
-                    continue;
 
-                string field = name.substr(7);
-                const char * val = e.valuestr();
+                if (name.find("filter_arr_") == 0) {
+                    string field = name.substr(11);
+                    string val(e.valuestr());
 
-                char * temp;
+                    BSONArrayBuilder arrBuilder;
+                    for (size_t commaPos = val.find(',');
+                         val.length() > 0;
+                         commaPos = val.find(',')) {
 
-                // TODO: this is how i guess if something is a number.  pretty lame right now
-                double number = strtod( val , &temp );
-                if ( temp != val )
-                    queryBuilder.append( field , number );
-                else
-                    queryBuilder.append( field , val );
+                        if (commaPos == string::npos) commaPos = val.length();
+
+                        // TODO: this is how i guess if something is a number.  pretty lame right now
+                        char* temp;
+                        double number = strtod(val.substr(0, commaPos).c_str(), &temp);
+                        if ( temp != val )
+                            arrBuilder << number;
+                        else
+                            arrBuilder << val.substr(0, commaPos);
+
+                        if (commaPos == val.length()) break;
+                        val.erase(0, commaPos + 1);
+                    }
+
+                    queryBuilder.append(field, arrBuilder.arr());
+                }
+                else if (name.find("filter_") == 0) {
+                    string field = name.substr(7);
+                    const char * val = e.valuestr();
+
+                    // TODO: this is how i guess if something is a number.  pretty lame right now
+                    char * temp;
+                    double number = strtod( val , &temp );
+                    if ( temp != val )
+                        queryBuilder.append( field , number );
+                    else
+                        queryBuilder.append( field , val );
+                }
             }
 
             BSONObj query = queryBuilder.obj();

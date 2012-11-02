@@ -377,6 +377,10 @@ namespace mongo {
         int nKeys() const { return this->n; }
         const DiskLoc getNextChild() const { return this->nextChild; }
 
+        // for statistic analysis
+        unsigned int getBsonSize() const { return static_cast<unsigned int>(this->topSize); }
+        unsigned int getEmptySize() const { return static_cast<unsigned int>(this->emptySize); }
+
     protected:
         char * dataAt(short ofs) { return this->data + ofs; }
 
