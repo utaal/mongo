@@ -364,7 +364,7 @@ namespace {
         int extentOfs = ex->myLoc.getOfs();
 
         if (! (dl.a() == ex->myLoc.a() &&
-               dl.getOfs() + dr->lengthWithHeaders() >= extentOfs &&
+               dl.getOfs() + dr->lengthWithHeaders() > extentOfs &&
                dl.getOfs() < extentOfs + ex->length) ) {
 
             return;
@@ -461,7 +461,7 @@ namespace {
      *       characteristicAvg: <average value of the characteristic field>
      *       outOfOrderRecs: <number of records that follow - in the record linked list -
      *                        a record that is located further in the extent>
-     *       freeRecsPerBucket: [ ... ],
+     * (opt) freeRecsPerBucket: [ ... ],
      * The nth element in the freeRecsPerBucket array is the count of deleted records in the
      * nth bucket of the deletedList.
      * The characteristic field dotted path is specified in params.characteristicField.
