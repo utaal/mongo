@@ -462,11 +462,12 @@ namespace {
      *       outOfOrderRecs: <number of records that follow - in the record linked list -
      *                        a record that is located further in the extent>
      * (opt) freeRecsPerBucket: [ ... ],
-     * (opt) cappedDeletedRecs: {
-     *           start: <offset of deleted record at start of extent>
-     *           end: <offset of deleted record at end of extent>
-     *     (opt) insertionPoint: <offset on next inserted record will end up here>
-     *       }
+     * (opt) cappedDeletedRecs: [
+     *           { ofs: <deleted record offset from start of extent>
+     *             bytes: <deleted record size in bytes>
+     *       (opt) isLastDelRecLastExtent: <true if this is the same deleted record as the one
+     *                                      returned by getLastDelRecLastExtent>
+     *           }
      *
      * The nth element in the freeRecsPerBucket array is the count of deleted records in the
      * nth bucket of the deletedList.
@@ -575,14 +576,11 @@ namespace {
                 if (dl.a() == ex->myLoc.a() &&
                     dl.getOfs() > extentOfs &&
                     dl.getOfs() <= extentOfs + ex->length) {
-                    PRINT(extentOfs);
-                    PRINT(ex->length);
-                    PRINT(dl.getOfs());
                     BSONObjBuilder drecBuilder;
                     drecBuilder.append("offset", dl.getOfs() - extentOfs);
                     drecBuilder.append("bytes", dr->lengthWithHeaders());
                     if (dl == lastRecInPrevExtentDl) {
-                        drecBuilder.append("lastExtentPtr", true);
+                        drecBuilder.append("isLastDelRecLastExtent", true);
                     }
                     cappedDeletedRecsArrayBuilder.append(drecBuilder.obj());
                 }
