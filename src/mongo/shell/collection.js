@@ -488,7 +488,7 @@ DBCollection.prototype.getDiskStorageStats = function(params) {
 
     var printExtent = function(ex, rng) {
         print("--- extent " + rng + " ---");
-        print("tot " + formatSizeBar(ex));
+        print("tot " + formatChunkData(ex));
         print();
         if (ex.chunks) {
             for (var c = 0; c < ex.chunks.length; ++c) {
