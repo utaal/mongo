@@ -504,6 +504,18 @@ DBCollection.prototype.getDiskStorageStats = function(params) {
         for (var i = 0; i < stats.extents.length; ++i) {
             var ex = stats.extents[i];
             print(sh._padStr("" + i, 3) + " " + formatChunkData(ex));
+            if (ex.cappedDeletedRecs) {
+                var txt = "";
+                for (var d in ex.cappedDeletedRecs) {
+                    var deletedRec = ex.cappedDeletedRecs[d];
+                    txt += "[ofs: " + deletedRec.offset + ", len: " + deletedRec.bytes;
+                    if (deletedRec.lastExtentPtr) {
+                        txt += " (ptr)";
+                    }
+                    txt += "] ";
+                }
+                print("\tcapped, extent length: " + (ex.onDiskBytes + ex.extentHeaderBytes) + "b, deleted records: " + txt);
+            }
         }
         print();
         if (params && (params.granularity || params.numberOfChunks)) {

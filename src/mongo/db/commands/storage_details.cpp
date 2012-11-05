@@ -462,6 +462,12 @@ namespace {
      *       outOfOrderRecs: <number of records that follow - in the record linked list -
      *                        a record that is located further in the extent>
      * (opt) freeRecsPerBucket: [ ... ],
+     * (opt) cappedDeletedRecs: {
+     *           start: <offset of deleted record at start of extent>
+     *           end: <offset of deleted record at end of extent>
+     *     (opt) insertionPoint: <offset on next inserted record will end up here>
+     *       }
+     *
      * The nth element in the freeRecsPerBucket array is the count of deleted records in the
      * nth bucket of the deletedList.
      * The characteristic field dotted path is specified in params.characteristicField.
@@ -531,7 +537,7 @@ namespace {
             }
         }
 
-        bool processingDeletedRecords = !isCapped && params.processDeletedRecords;
+        bool processingNormalDeletedRecs = !isCapped && params.processDeletedRecords;
 
         { // ensure done() is called by invoking destructor when done with the builder
             scoped_ptr<BSONArrayBuilder> deletedRecordsArrayBuilder;
@@ -540,7 +546,7 @@ namespace {
                         new BSONArrayBuilder(result.subarrayStart("deletedRecords")));
             }
 
-            if (processingDeletedRecords) {
+            if (processingNormalDeletedRecs) {
                 for (int bucketNum = 0; bucketNum < mongo::Buckets; bucketNum++) {
                     DiskLoc dl = nsd->deletedList[bucketNum];
                     while (!dl.isNull()) {
@@ -557,6 +563,35 @@ namespace {
             }
         }
 
+        if (isCapped && params.processDeletedRecords) {
+            BSONArrayBuilder cappedDeletedRecsArrayBuilder(result.subarrayStart("cappedDeletedRecs"));
+
+            DiskLoc dl = nsd->deletedList[0];
+            DiskLoc lastRecInPrevExtentDl = nsd->deletedList[1];
+            while (!dl.isNull()) {
+                killCurrentOp.checkForInterrupt();
+
+                DeletedRecord* dr = dl.drec();
+                if (dl.a() == ex->myLoc.a() &&
+                    dl.getOfs() > extentOfs &&
+                    dl.getOfs() <= extentOfs + ex->length) {
+                    PRINT(extentOfs);
+                    PRINT(ex->length);
+                    PRINT(dl.getOfs());
+                    BSONObjBuilder drecBuilder;
+                    drecBuilder.append("offset", dl.getOfs() - extentOfs);
+                    drecBuilder.append("bytes", dr->lengthWithHeaders());
+                    if (dl == lastRecInPrevExtentDl) {
+                        drecBuilder.append("lastExtentPtr", true);
+                    }
+                    cappedDeletedRecsArrayBuilder.append(drecBuilder.obj());
+                }
+                dl = dr->nextDeleted();
+            }
+
+            cappedDeletedRecsArrayBuilder.doneFast(); //TODO(andrea.lattuada) can be removed when
+        }                                             //                      SERVER-7459 is fixed
+
         DiskStorageData extentData(0);
         if (chunkData.size() > 1) {
             BSONArrayBuilder chunkArrayBuilder (result.subarrayStart("chunks"));
@@ -566,14 +601,14 @@ namespace {
                 killCurrentOp.checkForInterrupt();
                 extentData += *it;
                 BSONObjBuilder chunkBuilder;
-                it->appendToBSONObjBuilder(chunkBuilder, processingDeletedRecords);
+                it->appendToBSONObjBuilder(chunkBuilder, processingNormalDeletedRecs);
                 chunkArrayBuilder.append(chunkBuilder.obj());
             }
             chunkArrayBuilder.doneFast(); //TODO(andrea.lattuada) can be removed when
                                           //                      SERVER-7459 is fixed
-            extentData.appendToBSONObjBuilder(result, processingDeletedRecords);
+            extentData.appendToBSONObjBuilder(result, processingNormalDeletedRecs);
         } else {
-            chunkData[0].appendToBSONObjBuilder(result, processingDeletedRecords);
+            chunkData[0].appendToBSONObjBuilder(result, processingNormalDeletedRecs);
         }
         return true;
     }
@@ -657,7 +692,13 @@ namespace {
     bool analyzeExtent(const NamespaceDetails* nsd, const Extent* ex, SubCommand subCommand,
                        AnalyzeParams& params, string& errmsg, BSONObjBuilder& outputBuilder) {
 
-        params.startOfs = max(0, params.startOfs);
+        switch (subCommand) {
+            case SUBCMD_DISK_STORAGE:
+                params.startOfs = max(Extent::HeaderSize(), params.startOfs); break;
+            case SUBCMD_PAGES_IN_RAM:
+                params.startOfs = max(0, params.startOfs); break;
+        }
+
         params.endOfs = min(params.endOfs, ex->length);
         params.length = params.endOfs - params.startOfs;
         if (params.numberOfChunks != 0) {
@@ -673,14 +714,13 @@ namespace {
         }
         params.lastChunkLength = params.length -
                 (params.granularity * (params.numberOfChunks - 1));
+
         bool success = false;
         switch (subCommand) {
             case SUBCMD_DISK_STORAGE:
-                success = analyzeDiskStorage(nsd, ex, params, errmsg, outputBuilder);
-                break;
+                success = analyzeDiskStorage(nsd, ex, params, errmsg, outputBuilder); break;
             case SUBCMD_PAGES_IN_RAM:
-                success = analyzePagesInRAM(ex, params, errmsg, outputBuilder);
-                break;
+                success = analyzePagesInRAM(ex, params, errmsg, outputBuilder); break;
         }
         return success;
     }
