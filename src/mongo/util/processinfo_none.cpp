@@ -62,4 +62,9 @@ namespace mongo {
         return true;
     }
 
+    bool ProcessInfo::pagesInMemory(char* start, size_t numPages, vector<bool>& out) {
+        verify(0);
+        return false;
+    }
+
 }
