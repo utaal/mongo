@@ -378,6 +378,7 @@ namespace mongo {
         const DiskLoc getNextChild() const { return this->nextChild; }
 
         // for tree inspection and statistical analysis
+        // NOTE: topSize and emptySize have different types in BtreeData_V0 and BtreeData_V1
 
         /** Size used for bson storage, including storage of old keys. */
         unsigned int getTopSize() const { return static_cast<unsigned int>(this->topSize); }
