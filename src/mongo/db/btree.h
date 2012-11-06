@@ -377,6 +377,13 @@ namespace mongo {
         int nKeys() const { return this->n; }
         const DiskLoc getNextChild() const { return this->nextChild; }
 
+        // for tree inspection and statistical analysis
+
+        /** Size used for bson storage, including storage of old keys. */
+        unsigned int getTopSize() const { return static_cast<unsigned int>(this->topSize); }
+        /** Size of the empty region. */
+        unsigned int getEmptySize() const { return static_cast<unsigned int>(this->emptySize); }
+
     protected:
         char * dataAt(short ofs) { return this->data + ofs; }
 
