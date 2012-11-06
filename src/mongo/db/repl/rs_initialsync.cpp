@@ -124,7 +124,7 @@ namespace mongo {
         d->emptyCappedCollection(rsoplog);
     }
 
-    Member* ReplSetImpl::getMemberToSyncTo() {
+    const Member* ReplSetImpl::getMemberToSyncTo() {
         lock lk(this);
 
         bool buildIndexes = true;
@@ -150,14 +150,21 @@ namespace mongo {
             buildIndexes = myConfig().buildIndexes;
         }
 
+        const Member* primary = box.getPrimary();
+
+        // If we are only allowed to sync from the primary, return that
+        if (!config().chainingAllowed()) {
+            // Returns NULL if we cannot reach the primary
+            return primary;
+        }
+
         // find the member with the lowest ping time that has more data than me
 
         // Find primary's oplog time. Reject sync candidates that are more than
         // MAX_SLACK_TIME seconds behind.
         OpTime primaryOpTime;
         static const unsigned maxSlackDurationSeconds = 10 * 60; // 10 minutes
-        const Member* primary = box.getPrimary();
-        if (primary) 
+        if (primary)
             primaryOpTime = primary->hbinfo().opTime;
         else
             // choose a time that will exclude no candidates, since we don't see a primary

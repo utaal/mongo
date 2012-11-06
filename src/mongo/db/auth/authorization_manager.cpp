@@ -18,6 +18,7 @@
 
 #include <string>
 
+#include "mongo/base/init.h"
 #include "mongo/base/status.h"
 #include "mongo/client/dbclientinterface.h"
 #include "mongo/db/auth/action_set.h"
@@ -34,6 +35,106 @@ namespace mongo {
 
     namespace {
         Principal specialAdminPrincipal("special");
+    }
+
+    // ActionSets for the various system roles.  These ActionSets contain all the actions that
+    // a user of each system role is granted.
+    ActionSet readRoleActions;
+    ActionSet readWriteRoleActions;
+    ActionSet userAdminRoleActions;
+    ActionSet dbAdminRoleActions;
+    ActionSet serverAdminRoleActions;
+    ActionSet clusterAdminRoleActions;
+
+    // This sets up the system role ActionSets.  This is what determines what actions each role
+    // is authorized to perform
+    MONGO_INITIALIZER(AuthorizationSystemRoles)(InitializerContext* context) {
+        // Read role
+        // TODO: Remove OLD_READ once commands require the proper actions
+        readRoleActions.addAction(ActionType::oldRead);
+        readRoleActions.addAction(ActionType::collStats);
+        readRoleActions.addAction(ActionType::dbStats);
+        readRoleActions.addAction(ActionType::find);
+
+        // Read-write role
+        readWriteRoleActions.addAllActionsFromSet(readRoleActions);
+        // TODO: Remove OLD_WRITE once commands require the proper actions
+        readWriteRoleActions.addAction(ActionType::oldWrite);
+        readWriteRoleActions.addAction(ActionType::convertToCapped);
+        readWriteRoleActions.addAction(ActionType::createCollection); // TODO: should db admin get this also?
+        readWriteRoleActions.addAction(ActionType::dropCollection);
+        readWriteRoleActions.addAction(ActionType::dropIndexes);
+        readWriteRoleActions.addAction(ActionType::emptycapped);
+        readWriteRoleActions.addAction(ActionType::ensureIndex);
+        readWriteRoleActions.addAction(ActionType::insert);
+        readWriteRoleActions.addAction(ActionType::remove);
+        readWriteRoleActions.addAction(ActionType::update);
+
+        // User admin role
+        userAdminRoleActions.addAction(ActionType::userAdmin);
+
+        // DB admin role
+        dbAdminRoleActions.addAction(ActionType::clean);
+        dbAdminRoleActions.addAction(ActionType::collMod);
+        dbAdminRoleActions.addAction(ActionType::collStats);
+        dbAdminRoleActions.addAction(ActionType::compact);
+        dbAdminRoleActions.addAction(ActionType::convertToCapped);
+        dbAdminRoleActions.addAction(ActionType::dbStats);
+        dbAdminRoleActions.addAction(ActionType::dropCollection);
+        dbAdminRoleActions.addAction(ActionType::reIndex); // TODO: Should readWrite have this also? This isn't consistent with ENSURE_INDEX and DROP_INDEXES
+        dbAdminRoleActions.addAction(ActionType::renameCollection);
+        dbAdminRoleActions.addAction(ActionType::validate);
+
+        // Server admin role
+        serverAdminRoleActions.addAction(ActionType::closeAllDatabases);
+        serverAdminRoleActions.addAction(ActionType::connPoolStats);
+        serverAdminRoleActions.addAction(ActionType::connPoolSync);
+        serverAdminRoleActions.addAction(ActionType::cpuProfiler);
+        serverAdminRoleActions.addAction(ActionType::cursorInfo);
+        serverAdminRoleActions.addAction(ActionType::diagLogging);
+        serverAdminRoleActions.addAction(ActionType::fsync);
+        serverAdminRoleActions.addAction(ActionType::getCmdLineOpts);
+        serverAdminRoleActions.addAction(ActionType::getLog);
+        serverAdminRoleActions.addAction(ActionType::getParameter);
+        serverAdminRoleActions.addAction(ActionType::getShardMap);
+        serverAdminRoleActions.addAction(ActionType::getShardVersion);
+        serverAdminRoleActions.addAction(ActionType::hostInfo);
+        serverAdminRoleActions.addAction(ActionType::listDatabases);
+        serverAdminRoleActions.addAction(ActionType::logRotate);
+        serverAdminRoleActions.addAction(ActionType::profile);
+        serverAdminRoleActions.addAction(ActionType::repairDatabase);
+        serverAdminRoleActions.addAction(ActionType::replSetFreeze);
+        serverAdminRoleActions.addAction(ActionType::replSetGetStatus);
+        serverAdminRoleActions.addAction(ActionType::replSetInitiate);
+        serverAdminRoleActions.addAction(ActionType::replSetMaintenance);
+        serverAdminRoleActions.addAction(ActionType::replSetReconfig);
+        serverAdminRoleActions.addAction(ActionType::replSetStepDown);
+        serverAdminRoleActions.addAction(ActionType::replSetSyncFrom);
+        serverAdminRoleActions.addAction(ActionType::resync);
+        serverAdminRoleActions.addAction(ActionType::setParameter);
+        serverAdminRoleActions.addAction(ActionType::shutdown);
+        serverAdminRoleActions.addAction(ActionType::top);
+        serverAdminRoleActions.addAction(ActionType::touch);
+
+        // Cluster admin role
+        clusterAdminRoleActions.addAction(ActionType::addShard);
+        clusterAdminRoleActions.addAction(ActionType::dropDatabase); // TODO: Should there be a CREATE_DATABASE also?
+        clusterAdminRoleActions.addAction(ActionType::enableSharding);
+        clusterAdminRoleActions.addAction(ActionType::flushRouterConfig);
+        clusterAdminRoleActions.addAction(ActionType::listShards);
+        clusterAdminRoleActions.addAction(ActionType::moveChunk);
+        clusterAdminRoleActions.addAction(ActionType::movePrimary);
+        clusterAdminRoleActions.addAction(ActionType::netstat);
+        clusterAdminRoleActions.addAction(ActionType::removeShard);
+        clusterAdminRoleActions.addAction(ActionType::setShardVersion); // TODO: should this be internal?
+        clusterAdminRoleActions.addAction(ActionType::shardCollection);
+        clusterAdminRoleActions.addAction(ActionType::shardingState);
+        clusterAdminRoleActions.addAction(ActionType::split);
+        clusterAdminRoleActions.addAction(ActionType::splitChunk);
+        clusterAdminRoleActions.addAction(ActionType::splitVector);
+        clusterAdminRoleActions.addAction(ActionType::unsetSharding);
+
+        return Status::OK();
     }
 
     AuthorizationManager::AuthorizationManager(ExternalState* externalState) {
@@ -63,6 +164,16 @@ namespace mongo {
         _aquiredCapabilities.grantCapability(capability);
 
         return Status::OK();
+    }
+
+    void AuthorizationManager::grantInternalAuthorization() {
+        Principal* internalPrincipal = new Principal("__system");
+        _authenticatedPrincipals.add(internalPrincipal);
+        ActionSet allActions;
+        allActions.addAllActions();
+        Capability capability("*", internalPrincipal, allActions);
+        Status status = acquireCapability(capability);
+        verify (status == Status::OK());
     }
 
     Status AuthorizationManager::getPrivilegeDocument(DBClientBase* conn,
@@ -129,13 +240,13 @@ namespace mongo {
         bool readOnly = false;
         ActionSet actions;
         if (privilegeDocument.hasField("readOnly") && privilegeDocument["readOnly"].trueValue()) {
-            actions.addAction(ActionType::READ);
+            actions.addAllActionsFromSet(readRoleActions);
             readOnly = true;
         }
         else {
-            actions.addAction(ActionType::READ_WRITE); // TODO: should this also add READ?
-            actions.addAction(ActionType::DB_ADMIN);
-            actions.addAction(ActionType::USER_ADMIN);
+            actions.addAllActionsFromSet(readWriteRoleActions);
+            actions.addAllActionsFromSet(dbAdminRoleActions);
+            actions.addAllActionsFromSet(userAdminRoleActions);
         }
 
         if (dbname == "admin" || dbname == "local") {
@@ -143,8 +254,8 @@ namespace mongo {
             result->grantCapability(Capability("*", principal, actions));
             // Make server and cluster admin actions available on admin database.
             if (!readOnly) {
-                actions.addAction(ActionType::SERVER_ADMIN);
-                actions.addAction(ActionType::CLUSTER_ADMIN);
+                actions.addAllActionsFromSet(serverAdminRoleActions);
+                actions.addAllActionsFromSet(clusterAdminRoleActions);
             }
         }
 
