@@ -508,9 +508,10 @@ DBCollection.prototype.getDiskStorageStats = function(params) {
                 var txt = "";
                 for (var d in ex.cappedDeletedRecs) {
                     var deletedRec = ex.cappedDeletedRecs[d];
+                    txt += deletedRec.posInList;
                     txt += "[ofs: " + deletedRec.offset + ", len: " + deletedRec.bytes;
                     if (deletedRec.isLastDelRecLastExtent) {
-                        txt += " (next is insertion point)";
+                        txt += " (lastDelRecLastExtent)";
                     }
                     txt += "] ";
                 }

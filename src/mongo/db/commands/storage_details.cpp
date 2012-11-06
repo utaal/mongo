@@ -569,6 +569,8 @@ namespace {
 
             DiskLoc dl = nsd->deletedList[0];
             DiskLoc lastRecInPrevExtentDl = nsd->deletedList[1];
+
+            int num = 0;
             while (!dl.isNull()) {
                 killCurrentOp.checkForInterrupt();
 
@@ -579,12 +581,15 @@ namespace {
                     BSONObjBuilder drecBuilder;
                     drecBuilder.append("offset", dl.getOfs() - extentOfs);
                     drecBuilder.append("bytes", dr->lengthWithHeaders());
+                    drecBuilder.append("posInList", num);
                     if (dl == lastRecInPrevExtentDl) {
                         drecBuilder.append("isLastDelRecLastExtent", true);
                     }
                     cappedDeletedRecsArrayBuilder.append(drecBuilder.obj());
                 }
+
                 dl = dr->nextDeleted();
+                num++;
             }
 
             cappedDeletedRecsArrayBuilder.doneFast(); //TODO(andrea.lattuada) can be removed when
