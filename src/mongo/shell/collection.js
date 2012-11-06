@@ -508,13 +508,15 @@ DBCollection.prototype.getDiskStorageStats = function(params) {
                 var txt = "";
                 for (var d in ex.cappedDeletedRecs) {
                     var deletedRec = ex.cappedDeletedRecs[d];
+                    txt += deletedRec.posInList;
                     txt += "[ofs: " + deletedRec.offset + ", len: " + deletedRec.bytes;
-                    if (deletedRec.lastExtentPtr) {
-                        txt += " (ptr)";
+                    if (deletedRec.isLastDelRecLastExtent) {
+                        txt += " (lastDelRecLastExtent)";
                     }
                     txt += "] ";
                 }
-                print("\tcapped, extent length: " + (ex.onDiskBytes + ex.extentHeaderBytes) + "b, deleted records: " + txt);
+                print("\tcapped, extent length: " + (ex.onDiskBytes + ex.extentHeaderBytes) +
+                      "b, deleted records: " + txt);
             }
         }
         print();
