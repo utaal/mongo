@@ -38,8 +38,6 @@ namespace mongo {
     ProcessInfo::~ProcessInfo() {
     }
 
-    static const uintptr_t pageSizeBytes = sysconf(_SC_PAGESIZE);
-
     /**
      * Get a sysctl string value by name.  Use string specialization by default.
      */
@@ -152,19 +150,25 @@ namespace mongo {
         return true;
     }
 
-    inline char* getPageAddress(char* addr) {
-        return reinterpret_cast<char*>(reinterpret_cast<uintptr_t>(addr) & ~(pageSizeBytes - 1));
-    }
-
-    bool ProcessInfo::blockInMemory( char * start ) {
-         start = getPageAddress(start);
-
+    bool ProcessInfo::blockInMemory(char * start) {
          char x = 0;
-         if ( mincore( start , 128 , &x ) ) {
+         if (mincore(alignToStartOfPage(start), getPageSize(), &x)) {
              log() << "mincore failed: " << errnoWithDescription() << endl;
              return 1;
          }
          return x & 0x1;
     }
 
+    bool ProcessInfo::pagesInMemory(char* start, size_t numPages, vector<bool>* out) {
+        fassert(16468, out->size() >= numPages);
+        scoped_array<char> vec(new char[numPages]);
+        if (mincore(alignToStartOfPage(start), numPages * getPageSize(), vec.get())) {
+            log() << "mincore failed: " << errnoWithDescription() << endl;
+            return false;
+        }
+        for (size_t i = 0; i < numPages; ++i) {
+            (*out)[i] = (0x1 & vec[i]) == 0x1;
+        }
+        return true;
+    }
 }

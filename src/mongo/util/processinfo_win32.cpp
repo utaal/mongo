@@ -224,4 +224,25 @@ namespace mongo {
         return false;
     }
 
+    bool ProcessInfo::pagesInMemory(char* start, size_t numPages, vector<bool>* out) {
+        fassert(16470, out->size() >= numPages);
+        scoped_array<PSAPI_WORKING_SET_EX_INFORMATION> wsinfo(
+                new PSAPI_WORKING_SET_EX_INFORMATION[numPages]);
+
+        char * startOfFirstPage = alignToStartOfPage(start);
+        for (size_t i = 0; i < numPages; ++i) {
+            wsinfo[i].VirtualAddress = startOfFirstPage + i * getPageSize();
+        }
+
+        BOOL result = psapiGlobal.QueryWSEx(GetCurrentProcess(),
+                                            wsinfo.get(),
+                                            sizeof(PSAPI_WORKING_SET_EX_INFORMATION) * numPages);
+
+        if (!result) return false;
+        for (size_t i = 0; i < numPages; ++i) {
+            (*out)[i] = wsinfo[i].VirtualAttributes.Valid;
+        }
+        return true;
+    }
+
 }
