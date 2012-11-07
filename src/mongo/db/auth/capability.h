@@ -21,28 +21,21 @@
 #include "mongo/db/auth/action_set.h"
 #include "mongo/db/auth/action_type.h"
 #include "mongo/db/auth/principal.h"
-#include "mongo/platform/cstdint.h"
 
 namespace mongo {
 
     /**
-     * A representation that a given principal has permission to perform a set of actions on a
-     * specific resource.  Also contains static functions for converting actions and sets of
-     * actions from their string representations to their internal representations.
-     * This class does not do any locking/synchronization, the consumer will be responsible for
-     * synchronizing access.
+     * A representation of the permission to perform a set of actions on a specific resource.
      */
     class Capability {
     public:
 
-        Capability(const std::string& resource,
-                   Principal* principal,
-                   ActionSet actions);
+        Capability(const std::string& resource, ActionSet actions);
         ~Capability() {}
 
-        const Principal* getPrincipal() const;
-        const std::string& getResource() const;
-        const ActionSet& getActions() const;
+        const std::string& getResource() const { return _resource; }
+
+        const ActionSet& getActions() const { return _actions; }
 
         // Checks if the given action is present in the Capability.
         bool includesAction(const ActionType& action) const;
@@ -50,7 +43,6 @@ namespace mongo {
     private:
 
         std::string _resource;
-        Principal* _principal;
         ActionSet _actions; // bitmask of actions this capability grants
     };
 

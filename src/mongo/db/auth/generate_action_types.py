@@ -18,20 +18,11 @@
 """Generate action_type.{h,cpp}
 
 Usage:
-    python generate_action_types.py <header file path> <source file path>
+    python generate_action_types.py <path to action_types.txt> <header file path> <source file path>
 """
 
 import sys
 
-# List of tuples describing the ActionTypes that should be created.
-# The first value in the tuple is the name of the enum, the second is the string
-# representation.
-actionTypes = [("READ", "r"),
-               ("READ_WRITE", "w"),
-               ("USER_ADMIN", "u"),
-               ("DB_ADMIN", "d"),
-               ("SERVER_ADMIN", "s"),
-               ("CLUSTER_ADMIN", "c")]
 
 headerFileTemplate = """// AUTO-GENERATED FILE DO NOT EDIT
 // See src/mongo/db/auth/generate_action_types.py
@@ -84,8 +75,10 @@ namespace mongo {
 %(actionTypeConstants)s
         enum ActionTypeIdentifier {
 %(actionTypeIdentifiers)s
-            ACTION_TYPE_END_VALUE, // Should always be last in this enum
+            actionTypeEndValue, // Should always be last in this enum
         };
+
+        static const int NUM_ACTION_TYPES = actionTypeEndValue;
 
     private:
 
@@ -158,21 +151,20 @@ namespace mongo {
 } // namespace mongo
 """
 
-def writeSourceFile(sourceOutputFile):
+def writeSourceFile(actionTypes, sourceOutputFile):
     actionTypeConstants = ""
     fromStringIfStatements = ""
     toStringCaseStatements = ""
-    for (actionType, stringRepresentation) in actionTypes:
+    for actionType in actionTypes:
         actionTypeConstants += ("    const ActionType ActionType::%(actionType)s"
-                                "(%(actionType)s_VALUE);\n" %
+                                "(%(actionType)sValue);\n" %
                                 dict(actionType=actionType))
-        fromStringIfStatements += """        if (action == "%(stringRepresentation)s") {
+        fromStringIfStatements += """        if (action == "%(actionType)s") {
             *result = %(actionType)s;
             return Status::OK();
-        }\n""" % dict(stringRepresentation=stringRepresentation, actionType=actionType)
-        toStringCaseStatements += """        case %(actionType)s_VALUE:
-            return "%(stringRepresentation)s";\n""" % dict(actionType=actionType,
-                                                           stringRepresentation=stringRepresentation)
+        }\n""" % dict(actionType=actionType)
+        toStringCaseStatements += """        case %(actionType)sValue:
+            return "%(actionType)s";\n""" % dict(actionType=actionType)
     formattedSourceFile = sourceFileTemplate % dict(actionTypeConstants=actionTypeConstants,
                                                     fromStringIfStatements=fromStringIfStatements,
                                                     toStringCaseStatements=toStringCaseStatements)
@@ -180,47 +172,45 @@ def writeSourceFile(sourceOutputFile):
 
     pass
 
-def writeHeaderFile(headerOutputFile):
+def writeHeaderFile(actionTypes, headerOutputFile):
     actionTypeConstants = ""
     actionTypeIdentifiers = ""
-    for (actionType, unused) in actionTypes:
+    for actionType in actionTypes:
         actionTypeConstants += "        static const ActionType %s;\n" % (actionType)
-        actionTypeIdentifiers += "            %s_VALUE,\n" % (actionType)
+        actionTypeIdentifiers += "            %sValue,\n" % (actionType)
     formattedHeaderFile = headerFileTemplate % dict(actionTypeConstants=actionTypeConstants,
                                                     actionTypeIdentifiers=actionTypeIdentifiers)
     headerOutputFile.write(formattedHeaderFile)
 
-def hasDuplicateActionTypes():
-    sorted_by_name = sorted(actionTypes, key=lambda x: x[0])
-    sorted_by_string = sorted(actionTypes, key=lambda x: x[1])
+def hasDuplicateActionTypes(actionTypes):
+    sortedActionTypes = sorted(actionTypes)
 
     didFail = False
-    prev_name, prev_string = sorted_by_name[0]
-    for name, string in sorted_by_name[1:]:
-        if name == prev_name:
-            print 'Duplicate name %s with string descriptions %s and %s\n' % (name, string, prev_string)
+    prevActionType = sortedActionTypes[0]
+    for actionType in sortedActionTypes[1:]:
+        if actionType == prevActionType:
+            print 'Duplicate actionType %s\n' % actionType
             didFail = True
-        prev_name, prev_string = name, string
-
-    prev_name, prev_string = sorted_by_string[0]
-    for name, string in sorted_by_string[1:]:
-        if string == prev_string:
-            print 'Duplicate string description %s for actions %s and %s\n' % (string, name, prev_name)
-            didFail = True
-        prev_name, prev_string = name, string
+        prevActionType = actionType
 
     return didFail
 
+def parseActionTypesFromFile(actionTypesFilename):
+    actionTypesFile = open(actionTypesFilename, 'r')
+    actionTypes = eval(actionTypesFile.read())
+    return actionTypes
+
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print "Usage: generate_action_types.py <header file path> <source file path>"
+    if len(sys.argv) != 4:
+        print "Usage: generate_action_types.py <path to action_types.txt> <header file path> <source file path>"
         sys.exit(-1)
 
-    if hasDuplicateActionTypes():
+    actionTypes = parseActionTypesFromFile(sys.argv[1])
+    if hasDuplicateActionTypes(actionTypes):
         sys.exit(-1)
 
-    headerOutputFile = open(sys.argv[1], 'w')
-    sourceOutputFile = open(sys.argv[2], 'w')
+    headerOutputFile = open(sys.argv[2], 'w')
+    sourceOutputFile = open(sys.argv[3], 'w')
 
-    writeHeaderFile(headerOutputFile)
-    writeSourceFile(sourceOutputFile)
+    writeHeaderFile(actionTypes, headerOutputFile)
+    writeSourceFile(actionTypes, sourceOutputFile)

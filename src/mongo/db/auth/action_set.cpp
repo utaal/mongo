@@ -32,6 +32,14 @@ namespace mongo {
         _actions.set(action.getIdentifier(), true);
     }
 
+    void ActionSet::addAllActionsFromSet(const ActionSet& actions) {
+        _actions |= actions._actions;
+    }
+
+    void ActionSet::addAllActions() {
+        _actions = ~std::bitset<ActionType::NUM_ACTION_TYPES>();
+    }
+
     bool ActionSet::contains(const ActionType& action) const {
         return _actions[action.getIdentifier()];
     }
@@ -62,7 +70,7 @@ namespace mongo {
     std::string ActionSet::toString() const {
         StringBuilder str;
         bool addedOne = false;
-        for (int i = 0; i < ActionType::ACTION_TYPE_END_VALUE; i++) {
+        for (int i = 0; i < ActionType::actionTypeEndValue; i++) {
             ActionType action(i);
             if (contains(action)) {
                 if (addedOne) {

@@ -242,12 +242,14 @@ namespace mongo {
             BSONElement e = options.getField("size");
             if ( e.isNumber() ) {
                 size = e.numberLong();
-                size += 256;
+                uassert( 10083 , "create collection invalid size spec", size > 0 );
+
+                size += 0xff;
                 size &= 0xffffffffffffff00LL;
+                if ( size < Extent::minSize() )
+                    size = Extent::minSize();
             }
         }
-
-        uassert( 10083 , "create collection invalid size spec", size > 0 );
 
         bool newCapped = false;
         long long mx = 0;
@@ -515,7 +517,7 @@ namespace mongo {
                 verify( loops < 10000 );
                 out() << "warning: loops=" << loops << " fileno:" << fileNo << ' ' << ns << '\n';
             }
-            log() << "newExtent: " << ns << " file " << fileNo << " full, adding a new file\n";
+            log() << "newExtent: " << ns << " file " << fileNo << " full, adding a new file" << endl;
             return cc().database()->addAFile( 0, true )->createExtent(ns, approxSize, newCapped, loops+1);
         }
         int offset = header()->unused.getOfs();
@@ -612,7 +614,7 @@ namespace mongo {
                     f->lastExtent.writing() = e->xprev;
 
                 // use it
-                OCCASIONALLY if( n > 512 ) log() << "warning: newExtent " << n << " scanned\n";
+                OCCASIONALLY if( n > 512 ) log() << "warning: newExtent " << n << " scanned" << endl;
                 DiskLoc emptyLoc = e->reuse(ns, capped);
                 addNewExtentToNamespace(ns, e, e->myLoc, emptyLoc, capped);
                 return e;
@@ -1324,7 +1326,7 @@ namespace mongo {
             cc().database()->allocExtent(ns, Extent::followupSize(lenWHdr, d->lastExtentSize), false, !god);
             loc = d->alloc(ns, lenWHdr);
             if ( loc.isNull() ) {
-                log() << "warning: alloc() failed after allocating new extent. lenWHdr: " << lenWHdr << " last extent size:" << d->lastExtentSize << "; trying again\n";
+                log() << "warning: alloc() failed after allocating new extent. lenWHdr: " << lenWHdr << " last extent size:" << d->lastExtentSize << "; trying again" << endl;
                 for ( int z=0; z<10 && lenWHdr > d->lastExtentSize; z++ ) {
                     log() << "try #" << z << endl;
                     cc().database()->allocExtent(ns, Extent::followupSize(lenWHdr, d->lastExtentSize), false, !god);
@@ -1393,7 +1395,7 @@ namespace mongo {
 
         BSONObj info = loc.obj();
         bool background = info["background"].trueValue();
-        if( background && cc().isSyncThread() ) {
+        if (background && !isMasterNs(tabletoidxns.c_str())) {
             /* don't do background indexing on slaves.  there are nuances.  this could be added later
                 but requires more code.
                 */
