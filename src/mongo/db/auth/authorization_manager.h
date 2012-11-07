@@ -21,9 +21,9 @@
 #include "mongo/base/disallow_copying.h"
 #include "mongo/base/status.h"
 #include "mongo/client/dbclientinterface.h"
+#include "mongo/db/auth/acquired_capability.h"
 #include "mongo/db/auth/action_set.h"
 #include "mongo/db/auth/action_type.h"
-#include "mongo/db/auth/capability.h"
 #include "mongo/db/auth/capability_set.h"
 #include "mongo/db/auth/external_state.h"
 #include "mongo/db/auth/principal.h"
@@ -53,7 +53,12 @@ namespace mongo {
         Status removeAuthorizedPrincipal(const Principal* principal);
 
         // Grant this connection the given capability.
-        Status acquireCapability(const Capability& capability);
+        Status acquireCapability(const AcquiredCapability& capability);
+
+        // This should be called when the connection gets authenticated as the internal user.
+        // This grants a capability on all the actions for the internal role, with the
+        // internalPrincipal as the principal.
+        void grantInternalAuthorization();
 
         // Checks if this connection has the capabilities required to perform the given action
         // on the given resource.  Contains all the authorization logic including handling things
@@ -95,8 +100,6 @@ namespace mongo {
         CapabilitySet _aquiredCapabilities;
         // All principals who have been authenticated on this connection
         PrincipalSet _authenticatedPrincipals;
-
-        // TODO: handle temporary authorization from $auth table for commands
     };
 
 } // namespace mongo

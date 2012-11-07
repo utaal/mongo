@@ -1142,14 +1142,27 @@ jsTest.addAuth = function(conn) {
 }
 
 jsTest.authenticate = function(conn) {
-    // Set authenticated to stop an infinite recursion from getDB calling back into authenticate
-    conn.authenticated = true;
-    if (jsTest.options().auth || jsTest.options().keyFile) {
-        print ("Authenticating to admin user on connection: " + conn);
-        conn.authenticated = conn.getDB('admin').auth(jsTestOptions().adminUser,
-                                                      jsTestOptions().adminPassword);
-        return conn.authenticated;
+    if (!jsTest.options().auth && !jsTest.options().keyFile) {
+        conn.authenticated = true;
+        return true;
     }
+
+    try {
+        jsTest.attempt({},
+                       function() {
+                           // Set authenticated to stop an infinite recursion from getDB calling
+                           // back into authenticate.
+                           conn.authenticated = true;
+                           print ("Authenticating to admin user on connection: " + conn);
+                           conn.authenticated = conn.getDB('admin').auth(
+                               jsTestOptions().adminUser, jsTestOptions().adminPassword);
+                           return conn.authenticated;
+                       });
+    } catch (e) {
+        print("Caught exception while authenticating connection: " + tojson(e));
+        conn.authenticated = false;
+    }
+    return conn.authenticated;
 }
 
 jsTest.authenticateNodes = function(nodes) {
@@ -1696,6 +1709,7 @@ rs.help = function () {
     print("\trs.slaveOk()                    shorthand for db.getMongo().setSlaveOk()");
     print();
     print("\tdb.isMaster()                   check who is primary");
+    print("\tdb.printReplicationInfo()       check oplog size and time range");
     print();
     print("\treconfiguration helpers disconnect from the database so the shell will display");
     print("\tan error, even if the command succeeds.");

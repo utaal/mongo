@@ -99,7 +99,7 @@ namespace mongo {
         void addStats(int keyCount, int usedKeyCount, const BtreeBucket<Version>* bucket,
                       int keyNodeBytes) {
             this->numBuckets += 1;
-            this->bsonRatio << double(bucket->getBsonSize()) / bucket->bodySize();
+            this->bsonRatio << double(bucket->getTopSize()) / bucket->bodySize();
             this->keyNodeRatio << double(keyNodeBytes * keyCount) / bucket->bodySize();
             this->fillRatio << (1. - double(bucket->getEmptySize()) / bucket->bodySize());
             this->keyCount << keyCount;

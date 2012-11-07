@@ -46,6 +46,11 @@ env.StaticLibrary('md5', [
         ])
 
 env.StaticLibrary('bson', [
+        'bson/mutable/mutable_bson.cpp',
+        'bson/mutable/mutable_bson_builder.cpp',
+        'bson/mutable/mutable_bson_heap.cpp',
+        'bson/mutable/mutable_bson_internal.cpp',
+        'bson/util/bson_extract.cpp',
         'util/safe_num.cpp',
         'bson/oid.cpp',
         'db/nonce.cpp',
@@ -55,6 +60,15 @@ env.StaticLibrary('bson', [
         'md5',
         'stringutils',
         ])
+
+env.CppUnitTest('mutable_bson_test', ['bson/mutable/mutable_bson_test.cpp'],
+                 LIBDEPS=['bson'])
+
+env.CppUnitTest('mutable_bson_heap_test', ['bson/mutable/mutable_bson_heap_test.cpp'],
+                 LIBDEPS=['bson'])
+
+env.CppUnitTest('mutable_bson_builder_test', ['bson/mutable/mutable_bson_builder_test.cpp'],
+                LIBDEPS=['bson'])
 
 env.CppUnitTest('safe_num_test', ['util/safe_num_test.cpp'],
                 LIBDEPS=['bson'])
@@ -67,6 +81,8 @@ env.CppUnitTest('bson_validate_test', ['bson/bson_validate_test.cpp'],
 
 env.CppUnitTest('namespacestring_test', ['db/namespacestring_test.cpp'],
                 LIBDEPS=['bson'])
+
+env.CppUnitTest('bson_extract_test', ['bson/util/bson_extract_test.cpp'], LIBDEPS=['bson'])
 
 commonFiles = [ "pch.cpp",
                 "buildinfo.cpp",
@@ -121,19 +137,25 @@ if not os.path.exists( str( processInfoPlatformFile ) ):
 
 processInfoFiles.append( processInfoPlatformFile )
 
-commonFiles += processInfoFiles
+env.StaticLibrary("processinfo",
+                  processInfoFiles,
+                  LIBDEPS=["foundation", "bson"])
 
-
+env.CppUnitTest("processinfo_test",
+                ["util/processinfo_test.cpp"],
+                LIBDEPS=["processinfo"])
 
 env.StaticLibrary("fail_point",
                   ["util/fail_point.cpp",
-                   "util/fail_point_registry.cpp"],
+                   "util/fail_point_registry.cpp",
+                   "util/fail_point_service.cpp"],
                   LIBDEPS=["foundation", "bson"])
 
 env.StaticLibrary('mongocommon', commonFiles,
                   LIBDEPS=['bson',
                            'foundation',
                            'md5',
+                           'processinfo',
                            'stacktrace',
                            'stringutils',
                            'fail_point',
@@ -144,10 +166,10 @@ env.StaticLibrary('mongocommon', commonFiles,
 env.StaticLibrary("coredb", [
         "client/parallel.cpp",
         "db/commands.cpp",
+        "db/commands/fail_point_cmd.cpp",
         "db/commands/hashcmd.cpp",
         "db/commands/isself.cpp",
         "db/commands/server_status.cpp",
-        "db/fail_point_service.cpp",
         "db/pipeline/pipeline.cpp",
         "db/dbcommands_generic.cpp",
         "db/dbwebserver.cpp",
@@ -315,6 +337,8 @@ serverOnlyFiles = [ "db/curop.cpp",
                     "db/explain.cpp",
                     "db/geo/2d.cpp",
                     "db/geo/haystack.cpp",
+                    "db/geo/s2cursor.cpp",
+                    "db/geo/s2index.cpp",
                     "db/hashindex.cpp",
                     "db/ops/count.cpp",
                     "db/ops/delete.cpp",
@@ -409,7 +433,7 @@ env.StaticLibrary("serveronly", serverOnlyFiles,
                   LIBDEPS=["coreshard",
                            "dbcmdline",
                            "defaultversion",
-                           # "geojson",
+                           "geojson",
                            "geometry",
                            '$BUILD_DIR/third_party/shim_snappy'])
 
