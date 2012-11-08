@@ -65,26 +65,5 @@ namespace {
         ASSERT_TRUE(areClose(d.icdf(.25), -100, 1));
     }
 
-    TEST(descriptive_stats, DensityFromDistributionEstimators) {
-        DistributionEstimators<49> d;
-
-        for (double a = -.7; a <= .3; a += .001) {
-            d << a;
-        }
-        ASSERT_TRUE(d.quantilesReady());
-
-        DensityFromDistributionEstimators density(d, 1000);
-
-        double cumulativeProbability = 0.;
-        for (vector<double>::const_iterator it = density.result().begin();
-             it != density.result().end();
-             ++it) {
-
-            ASSERT_TRUE(areClose(*it, 1. / 1000, 1. / 1000));
-            cumulativeProbability += *it;
-        }
-        ASSERT_TRUE(areClose(cumulativeProbability, 1., .00001));
-    }
-
 }  // namespace
 
