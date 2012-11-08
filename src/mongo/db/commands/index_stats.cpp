@@ -151,8 +151,7 @@ namespace mongo {
             return branch[nodeDepth][childNum];
         }
 
-        void newBranchLevel(unsigned int depth, unsigned int childrenCount) {
-            verify(branch.size() == depth + 1);
+        void newBranchLevel(unsigned int childrenCount) {
             branch.push_back(vector<AreaStats>(childrenCount));
         }
 
@@ -288,7 +287,8 @@ namespace mongo {
 
                     // if the expansion of this node was requested
                 if (depth < _expandNodes.size() && _expandNodes[depth] == childNum) {
-                    _stats.newBranchLevel(depth, childrenCount);
+                    verify(_stats.branch.size() == depth + 1);
+                    _stats.newBranchLevel(childrenCount);
                     curNodeIsExpanded = true;
                 }
             }
