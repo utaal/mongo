@@ -145,14 +145,13 @@ namespace mongo {
             branch.push_back(vector<AreaStats>(1));
         }
 
-        AreaStats& nodeAt(unsigned int depth, unsigned int childNum) {
-            verify(branch.size() > depth);
-            verify(branch[depth].size() > childNum);
-            return branch[depth][childNum];
+        AreaStats& nodeAt(unsigned int nodeDepth, unsigned int childNum) {
+            verify(branch.size() > nodeDepth);
+            verify(branch[nodeDepth].size() > childNum);
+            return branch[nodeDepth][childNum];
         }
 
-        void newBranchLevel(unsigned int depth, unsigned int childrenCount) {
-            verify(branch.size() == depth + 1);
+        void newBranchLevel(unsigned int childrenCount) {
             branch.push_back(vector<AreaStats>(childrenCount));
         }
 
@@ -288,7 +287,8 @@ namespace mongo {
 
                     // if the expansion of this node was requested
                 if (depth < _expandNodes.size() && _expandNodes[depth] == childNum) {
-                    _stats.newBranchLevel(depth, childrenCount);
+                    verify(_stats.branch.size() == depth + 1);
+                    _stats.newBranchLevel(childrenCount);
                     curNodeIsExpanded = true;
                 }
             }
