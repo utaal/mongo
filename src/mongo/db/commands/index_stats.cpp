@@ -69,7 +69,7 @@ namespace mongo {
      */
     class AreaStats {
     public:
-        static const int QUANTILES = 99;
+        static const int quantiles = 99;
 
         boost::optional<NodeInfo> nodeInfo;
 
@@ -98,10 +98,12 @@ namespace mongo {
         template<class Version>
         void addStats(int keyCount, int usedKeyCount, const BtreeBucket<Version>* bucket,
                       int keyNodeBytes) {
-            this->numBuckets += 1;
-            this->bsonRatio << double(bucket->getTopSize()) / bucket->bodySize();
-            this->keyNodeRatio << double(keyNodeBytes * keyCount) / bucket->bodySize();
-            this->fillRatio << (1. - double(bucket->getEmptySize()) / bucket->bodySize());
+            this->numBuckets++;
+            this->bsonRatio << static_cast<double>(bucket->getTopSize()) / bucket->bodySize();
+            this->keyNodeRatio <<
+                    static_cast<double>(keyNodeBytes * keyCount) / bucket->bodySize();
+            this->fillRatio <<
+                    (1.0 - static_cast<double>(bucket->getEmptySize()) / bucket->bodySize());
             this->keyCount << keyCount;
             this->usedKeyCount << usedKeyCount;
         }
@@ -143,13 +145,14 @@ namespace mongo {
             branch.push_back(vector<AreaStats>(1));
         }
 
-        AreaStats& nodeAt(unsigned int depth_, unsigned int childNum) {
-            dassert(branch.size() > depth_); dassert(branch[depth_].size() > childNum);
-            return branch[depth_][childNum];
+        AreaStats& nodeAt(unsigned int depth, unsigned int childNum) {
+            verify(branch.size() > depth);
+            verify(branch[depth].size() > childNum);
+            return branch[depth][childNum];
         }
 
-        void newBranchLevel(unsigned int depth_, unsigned int childrenCount) {
-            dassert(branch.size() == depth_ + 1);
+        void newBranchLevel(unsigned int depth, unsigned int childrenCount) {
+            verify(branch.size() == depth + 1);
             branch.push_back(vector<AreaStats>(childrenCount));
         }
 
@@ -197,7 +200,7 @@ namespace mongo {
     };
 
     inline double average(unsigned int sum, unsigned int count) {
-        return (double) sum / count;
+        return static_cast<double>(sum) / count;
     }
 
     /**
@@ -343,7 +346,7 @@ namespace mongo {
                 nodeInfo.keyCount = keyCount;
                 nodeInfo.usedKeyCount = bucket->getN();
                 nodeInfo.fillRatio =
-                    (1. - double(bucket->getEmptySize()) / BucketBasics::bodySize());
+                    (1.0 - static_cast<double>(bucket->getEmptySize()) / BucketBasics::bodySize());
 
                 _stats.nodeAt(depth, childNum).nodeInfo = nodeInfo;
             }
@@ -351,7 +354,7 @@ namespace mongo {
             // add the stats for this bucket to the aggregate for a certain depth
             while (_stats.perLevel.size() < depth + 1)
                 _stats.perLevel.push_back(AreaStats());
-            dassert(_stats.perLevel.size() > depth);
+            verify(_stats.perLevel.size() > depth);
             AreaStats& level = _stats.perLevel[depth];
             level.addStats(keyCount, usedKeyCount, bucket, sizeof(_KeyNode));
 
@@ -390,7 +393,7 @@ namespace mongo {
         }
 
         IndexDetails& details = *detailsPtr;
-        result << "name" << details.indexName()
+        result << "index" << details.indexName()
                << "version" << details.version()
                << "isIdIndex" << details.isIdIndex()
                << "keyPattern" << details.keyPattern()
@@ -418,14 +421,14 @@ namespace mongo {
     // Command
 
     /**
-     * This command provides detailed and aggreate information and statistics for a btree. 
+     * This command provides detailed and aggregate information and statistics for a btree. 
      * Stats are aggregated for the entire tree, per-depth and, if requested through the expandNodes
      * option, per-subtree.
      * The entire btree is walked depth-first on every call. This command takes a read lock and may
      * be slow for large indexes if the underlying extents arent't already in physical memory.
      *
      * The output has the form:
-     *     { name: <index name>,
+     *     { index: <index name>,
      *       version: <index version (0 or 1),
      *       isIdKey: <true if this is the default _id index>,
      *       keyPattern: <bson object describing the key pattern>,
@@ -494,7 +497,12 @@ namespace mongo {
             return true;
         }
 
-        virtual void help(stringstream& h) const { h << "TODO. Slow."; }
+        virtual void help(stringstream& h) const {
+            h << "Provides detailed and aggregate information and statistics for a btree. "
+              << "The entire btree is walked on every call. This command takes a read lock, "
+              << "requires the entire btree storage to be paged-in and will be slow on large "
+              << "indexes.";
+        }
 
         virtual LockType locktype() const { return READ; }
 
@@ -513,13 +521,13 @@ namespace mongo {
 
             IndexStatsParams params;
 
-            // { name: _index_name }
-            BSONElement name = cmdObj["name"];
-            if (!name.ok() || name.type() != String) {
-                errmsg = "an index name is required, use {name: \"indexname\"}";
+            // { index: _index_name }
+            BSONElement indexName = cmdObj["index"];
+            if (!indexName.ok() || indexName.type() != String) {
+                errmsg = "an index name is required, use {index: \"indexname\"}";
                 return false;
             }
-            params.indexName = name.String();
+            params.indexName = indexName.String();
 
             BSONElement expandNodes = cmdObj["expandNodes"];
             if (expandNodes.ok()) {
