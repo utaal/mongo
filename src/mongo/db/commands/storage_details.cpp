@@ -622,7 +622,7 @@ namespace {
 
                 char* firstPageAddr = startAddr + (chunk * params.granularity);
                 vector<bool> isInMem(pagesInChunk);
-                if (! ProcessInfo::pagesInMemory(firstPageAddr, pagesInChunk, isInMem)) {
+                if (! ProcessInfo::pagesInMemory(firstPageAddr, pagesInChunk, &isInMem)) {
                     errmsg = "system call failed";
                     return false;
                 }

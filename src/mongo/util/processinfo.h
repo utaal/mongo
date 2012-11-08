@@ -110,10 +110,21 @@ namespace mongo {
         static bool blockInMemory( char * start );
 
         /**
-         * Sets i-th element of out to true if the (i+1)-th page starting from start is in memory.
-         * @return true on success, false otherwise
+         * @return a pointer aligned to the start of the page the provided pointer belongs to.
+         *
+         * NOTE requires blockCheckSupported() == true
          */
-        static bool pagesInMemory(char* start, size_t numPages, vector<bool>& out);
+        inline static char* alignToStartOfPage(char* ptr) {
+            return ptr - (reinterpret_cast<unsigned long long>(ptr) % getPageSize());
+        }
+
+        /**
+         * Sets i-th element of 'out' to true if the i-th page starting from start is in memory.
+         * @return true on success, false otherwise
+         *
+         * NOTE: requires out.size() >= numPages and blockCheckSupported() == true
+         */
+        static bool pagesInMemory(char* start, size_t numPages, vector<bool>* out);
 
     private:
         /**

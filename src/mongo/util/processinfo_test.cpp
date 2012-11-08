@@ -14,6 +14,8 @@
  *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <vector>
+
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/processinfo.h"
 
@@ -24,6 +26,34 @@ namespace mongo_test {
         ProcessInfo processInfo;
         if (processInfo.supported()) {
             ASSERT_FALSE(processInfo.getOsType().empty());
+        }
+    }
+
+    TEST(ProcessInfo, NonZeroPageSize) {
+        if (ProcessInfo::blockCheckSupported()) {
+            ASSERT_GREATER_THAN(ProcessInfo::getPageSize(), 0u);
+        }
+    }
+
+    const size_t PAGES = 10;
+
+    TEST(ProcessInfo, BlockInMemoryDoesNotThrow) {
+        if (ProcessInfo::blockCheckSupported()) {
+            char* ptr = new char[ProcessInfo::getPageSize() * PAGES];
+            ProcessInfo::blockInMemory(ptr + ProcessInfo::getPageSize() * 2);
+            delete[] ptr;
+        }
+    }
+
+    TEST(ProcessInfo, PagesInMemoryIsSensible) {
+        if (ProcessInfo::blockCheckSupported()) {
+            char* ptr = new char[ProcessInfo::getPageSize() * PAGES];
+            ptr[1] = 'a';
+            std::vector<bool> result(PAGES);
+            ASSERT_TRUE(ProcessInfo::pagesInMemory(ptr, PAGES, &result));
+            ASSERT_TRUE(result[0]);
+            ASSERT_FALSE(result[2]);
+            delete[] ptr;
         }
     }
 }
