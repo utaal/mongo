@@ -74,11 +74,11 @@ namespace mongo {
         boost::optional<NodeInfo> nodeInfo;
 
         unsigned int numBuckets;
-        SummaryEstimators<double, QUANTILES> bsonRatio;
-        SummaryEstimators<double, QUANTILES> fillRatio;
-        SummaryEstimators<double, QUANTILES> keyNodeRatio;
-        SummaryEstimators<unsigned int, QUANTILES> keyCount;
-        SummaryEstimators<unsigned int, QUANTILES> usedKeyCount;
+        SummaryEstimators<double, quantiles> bsonRatio;
+        SummaryEstimators<double, quantiles> fillRatio;
+        SummaryEstimators<double, quantiles> keyNodeRatio;
+        SummaryEstimators<unsigned int, quantiles> keyCount;
+        SummaryEstimators<unsigned int, quantiles> usedKeyCount;
 
         AreaStats() : numBuckets(0) {
         }
@@ -99,9 +99,9 @@ namespace mongo {
         void addStats(int keyCount, int usedKeyCount, const BtreeBucket<Version>* bucket,
                       int keyNodeBytes) {
             this->numBuckets++;
-            this->bsonRatio << static_cast<double>(bucket->getTopSize()) / bucket->bodySize();
+            this->bsonRatio << (static_cast<double>(bucket->getTopSize()) / bucket->bodySize());
             this->keyNodeRatio <<
-                    static_cast<double>(keyNodeBytes * keyCount) / bucket->bodySize();
+                    (static_cast<double>(keyNodeBytes * keyCount) / bucket->bodySize());
             this->fillRatio <<
                     (1.0 - static_cast<double>(bucket->getEmptySize()) / bucket->bodySize());
             this->keyCount << keyCount;
