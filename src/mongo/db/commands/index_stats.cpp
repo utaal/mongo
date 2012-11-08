@@ -151,8 +151,8 @@ namespace mongo {
             return branch[nodeDepth][childNum];
         }
 
-        void newBranchLevel(unsigned int nodeDepth, unsigned int childrenCount) {
-            verify(branch.size() == nodeDepth + 1);
+        void newBranchLevel(unsigned int depth, unsigned int childrenCount) {
+            verify(branch.size() == depth + 1);
             branch.push_back(vector<AreaStats>(childrenCount));
         }
 
