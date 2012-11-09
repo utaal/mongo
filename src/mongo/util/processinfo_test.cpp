@@ -37,7 +37,7 @@ namespace mongo_test {
 
     const size_t PAGES = 10;
 
-    TEST(ProcessInfo, BlockInMemoryDoesNotThrow) {
+    TEST(ProcessInfo, BlockInMemoryDoesNotThrowIfSupported) {
         if (ProcessInfo::blockCheckSupported()) {
             char* ptr = new char[ProcessInfo::getPageSize() * PAGES];
             ProcessInfo::blockInMemory(ptr + ProcessInfo::getPageSize() * 2);
@@ -47,13 +47,20 @@ namespace mongo_test {
 
     TEST(ProcessInfo, PagesInMemoryIsSensible) {
         if (ProcessInfo::blockCheckSupported()) {
-            char* ptr = new char[ProcessInfo::getPageSize() * PAGES];
+            static volatile char ptr[4096 * PAGES];
             ptr[1] = 'a';
-            std::vector<bool> result(PAGES);
-            ASSERT_TRUE(ProcessInfo::pagesInMemory(ptr, PAGES, &result));
+            std::vector<char> result;
+            ASSERT_TRUE(ProcessInfo::pagesInMemory(const_cast<char*>(ptr), PAGES, &result));
             ASSERT_TRUE(result[0]);
+            ASSERT_FALSE(result[1]);
             ASSERT_FALSE(result[2]);
-            delete[] ptr;
+            ASSERT_FALSE(result[3]);
+            ASSERT_FALSE(result[4]);
+            ASSERT_FALSE(result[5]);
+            ASSERT_FALSE(result[6]);
+            ASSERT_FALSE(result[7]);
+            ASSERT_FALSE(result[8]);
+            ASSERT_FALSE(result[9]);
         }
     }
 }

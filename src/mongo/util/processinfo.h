@@ -107,24 +107,28 @@ namespace mongo {
 
         static bool blockCheckSupported();
 
-        static bool blockInMemory( char * start );
+        static bool blockInMemory(const void* start);
 
         /**
          * @return a pointer aligned to the start of the page the provided pointer belongs to.
          *
          * NOTE requires blockCheckSupported() == true
          */
-        inline static char* alignToStartOfPage(char* ptr) {
-            return ptr - (reinterpret_cast<unsigned long long>(ptr) % getPageSize());
+        inline static const void* alignToStartOfPage(const void* ptr) {
+            return reinterpret_cast<void*>(
+                    reinterpret_cast<unsigned long long>(ptr) & ~(getPageSize() - 1));
         }
 
         /**
-         * Sets i-th element of 'out' to true if the i-th page starting from start is in memory.
+         * Sets i-th element of 'out' to non-zero if the i-th page starting from the one containing
+         * 'start' is in memory.
+         * The 'out' vector will be resized (expanded or shrinked) to fit the requested number of
+         * pages.
          * @return true on success, false otherwise
          *
          * NOTE: requires out.size() >= numPages and blockCheckSupported() == true
          */
-        static bool pagesInMemory(char* start, size_t numPages, vector<bool>* out);
+        static bool pagesInMemory(const void* start, size_t numPages, vector<char>* out);
 
     private:
         /**
