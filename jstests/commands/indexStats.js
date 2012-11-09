@@ -17,49 +17,52 @@ assert(result.ok);
 
 assert(result.index === "_id_");
 assert(result.isIdIndex === true);
-assert(typeof result.keyPattern == 'object' && result.keyPattern);
-assert(typeof result.storageNs == 'string');
-assert(typeof result.bucketBodyBytes == 'number');
-assert(result.depth === 1);
-assert(typeof result.overall === 'object' && result.overall);
-
-function isNonNullObject(o) {
-    return typeof o == 'object' && o != null;
-}
+assert(isObject(result.keyPattern));
+assert.neq(result.keyPattern, null);
+assert(isString(result.storageNs));
+assert(isNumber(result.bucketBodyBytes));
+assert.eq(result.depth, 1);
+assert(isObject(result.overall));
+assert.neq(result.overall, null);
 
 function checkStats(data) {
-    assert(typeof data.count == 'number');
-    assert(typeof data.mean == 'number');
-    assert(typeof data.stddev == 'number');
-    assert(typeof data.min == 'number');
-    assert(typeof data.max == 'number');
+    assert(isNumber(data.count));
+    assert(isNumber(data.mean));
+    assert(isNumber(data.stddev));
+    assert(isNumber(data.min));
+    assert(isNumber(data.max));
 }
 
 function checkAreaStats(data) {
-    assert(typeof data.numBuckets == 'number');
+    assert(isNumber(data.numBuckets));
 
-    assert(isNonNullObject(data.keyCount));
+    assert(isObject(data.keyCount));
+    assert.neq(data.keyCount, null);
     checkStats(data.keyCount);
 
-    assert(isNonNullObject(data.usedKeyCount));
+    assert(isObject(data.usedKeyCount));
+    assert.neq(data.usedKeyCount, null);
     checkStats(data.usedKeyCount);
 
-    assert(isNonNullObject(data.bsonRatio));
+    assert(isObject(data.bsonRatio));
+    assert.neq(data.bsonRatio, null);
     checkStats(data.bsonRatio);
 
-    assert(isNonNullObject(data.keyNodeRatio));
+    assert(isObject(data.keyNodeRatio));
+    assert.neq(data.keyNodeRatio, null);
     checkStats(data.keyNodeRatio);
 
-    assert(isNonNullObject(data.fillRatio));
+    assert(isObject(data.fillRatio));
+    assert.neq(data.fillRatio, null);
     checkStats(data.fillRatio);
 }
 
-assert(isNonNullObject(result.overall));
+assert(isObject(result.overall));
 checkAreaStats(result.overall);
 
 assert(result.perLevel instanceof Array);
 for (var i = 0; i < result.perLevel.length; ++i) {
-    assert(isNonNullObject(result.perLevel[i]));
+    assert(isObject(result.perLevel[i]));
     checkAreaStats(result.perLevel[i]);
 }
 
