@@ -16,15 +16,15 @@ if (result["bad cmd"]) {
 assert(result.ok);
 
 function checkDiskStats(data) {
-    assert(typeof data.extentHeaderBytes == 'number');
-    assert(typeof data.recordHeaderBytes == 'number');
-    assert(typeof data.numEntries == 'number');
+    assert(isNumber(data.extentHeaderBytes));
+    assert(isNumber(data.recordHeaderBytes));
+    assert(isNumber(data.numEntries));
     assert(data.bsonBytes instanceof NumberLong);
     assert(data.recBytes instanceof NumberLong);
     assert(data.onDiskBytes instanceof NumberLong);
-    assert(typeof data.outOfOrderRecs == 'number');
-    assert(typeof data.characteristicCount == 'number');
-    assert(typeof data.characteristicAvg == 'number');
+    assert(isNumber(data.outOfOrderRecs));
+    assert(isNumber(data.characteristicCount));
+    assert(isNumber(data.characteristicAvg));
     assert(data.freeRecsPerBucket instanceof Array);
 }
 
@@ -33,14 +33,16 @@ assert(result.extents && result.extents instanceof Array);
 var extents = result.extents;
 
 for (var i = 0; i < extents.length; ++i) {
-    assert(typeof extents[i] == 'object' && extents[i]);
+    assert(isObject(extents[i]));
+    assert.neq(extents[i], null);
     assert(extents[i].range instanceof Array);
-    assert(extents[i].range.length == 2);
-    assert(extents[i].isCapped === false);
+    assert.eq(extents[i].range.length, 2);
+    assert.eq(extents[i].isCapped, false);
     checkDiskStats(extents[i]);
     assert(extents[i].chunks instanceof Array);
     for (var c = 0; c < extents[i].chunks[c]; ++c) {
-        assert(typeof extents[i].chunks[c] == 'object' && extents[i].chunks[c]);
+        assert(isObject(extents[i].chunks[c]));
+        assert.neq(extents[i].chunks[c], null);
         checkStats(extents[i].chunks[c]);
     }
 }
@@ -52,14 +54,15 @@ assert(result.extents instanceof Array);
 var extents = result.extents;
 
 for (var i = 0; i < result.extents.length; ++i) {
-    assert(typeof extents[i] == 'object' && extents[i]);
-    assert(typeof extents[i].pageBytes == 'number');
-    assert(typeof extents[i].onDiskBytes == 'number');
-    assert(typeof extents[i].inMem == 'number');
+    assert(isObject(extents[i]));
+    assert.neq(extents[i], null);
+    assert(isNumber(extents[i].pageBytes));
+    assert(isNumber(extents[i].onDiskBytes));
+    assert(isNumber(extents[i].inMem));
 
     assert(extents[i].chunks instanceof Array);
     for (var c = 0; c < extents[i].chunks.length; ++c) {
-        assert(typeof extents[i].chunks[c] == 'number');
+        assert(isNumber(extents[i].chunks[c]));
     }
 }
 
