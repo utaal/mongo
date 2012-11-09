@@ -620,8 +620,8 @@ namespace {
                 }
                 int pagesInChunk = ceilingDiv(chunkBytes, PAGE_BYTES);
 
-                char* firstPageAddr = startAddr + (chunk * params.granularity);
-                vector<bool> isInMem(pagesInChunk);
+                const char* firstPageAddr = startAddr + (chunk * params.granularity);
+                vector<char> isInMem;
                 if (! ProcessInfo::pagesInMemory(firstPageAddr, pagesInChunk, &isInMem)) {
                     errmsg = "system call failed";
                     return false;
@@ -705,9 +705,11 @@ namespace {
             }
 
             long long storageSize = nsd->storageSize(NULL, NULL);
+            PRINT(storageSize);
 
             if (globalParams.numberOfChunks != 0) {
                 globalParams.granularity = ceilingDiv(storageSize, globalParams.numberOfChunks);
+                PRINT(globalParams.granularity);
             }
 
             { // ensure done() is called by invoking destructor when done with the builder
@@ -818,7 +820,7 @@ namespace {
         }
         params.granularity = granularityElm.number();
 
-        // { numberOfChunks: bytes }
+        // { numberOfChunks: num }
         BSONElement numberOfChunksElm = cmdObj["numberOfChunks"];
         if (numberOfChunksElm.ok() && !numberOfChunksElm.isNumber()) {
             errmsg = "numberOfChunks must be a number";
