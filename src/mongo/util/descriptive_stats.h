@@ -17,6 +17,7 @@
 
 #include <cmath>
 
+#include "mongo/db/jsobj.h"
 #include "mongo/util/assert_util.h"
 
 /**
@@ -83,6 +84,11 @@ namespace mongo {
          */
         inline Sample max() const { return _max; }
 
+        /**
+         * Appends the basic estimators to the provided BSONObjBuilder.
+         */
+        void appendBasicToBSONObjBuilder(BSONObjBuilder& b);
+
     private:
         size_t _count;
         double _sum;
@@ -107,6 +113,11 @@ namespace mongo {
         DistributionEstimators();
 
         DistributionEstimators& operator <<(const double sample);
+
+        /**
+         * Number of computed quantiles, excluding minimum and maximum.
+         */
+        static const size_t numberOfQuantiles = NumQuantiles;
 
         /**
          * Updates the estimators with another observed value.
@@ -164,6 +175,12 @@ namespace mongo {
             return quantile(quant);
         }
 
+        /**
+         * Appends the quantiles to the provided BSONArrayBuilder.
+         * REQUIRES e.quantilesReady() == true
+         */
+        void appendQuantilesToBSONArrayBuilder(BSONArrayBuilder& arr);
+
     private:
         inline double _positions_increments(std::size_t i) const;
 
@@ -198,6 +215,8 @@ namespace mongo {
         inline Sample max() const {
             return this->BasicEstimators<Sample>::max();
         }
+
+        BSONObj statisticSummaryToBSONObj();
     };
 
 } // namespace mongo
