@@ -22,6 +22,7 @@
 
 #include "mongo/base/status.h"
 #include "mongo/db/jsobj.h"
+#include "mongo/util/safe_num.h"
 
 namespace mongo {
 namespace mutablebson {
@@ -78,7 +79,7 @@ namespace mutablebson {
         Element parent() const;
 
         /** Find subtree nodes with a given name */
-        FilterIterator find(const std::string& fieldName);
+        FilterIterator find(const std::string& fieldName) const;
 
         /** Iterate children of this node */
         SiblingIterator children();
@@ -121,7 +122,7 @@ namespace mutablebson {
         bool getBoolValue() const;
         int32_t getIntValue() const;
         int64_t getLongValue() const;
-        int32_t getTSValue() const;
+        OpTime getTSValue() const;
         int64_t getDateValue() const;
         double getDoubleValue() const;
        
@@ -135,15 +136,18 @@ namespace mutablebson {
         const char* getStringValue() const;
         const char* getRegexValue() const;
 
+        SafeNum getSafeNumValue() const;
+
         void setBoolValue(bool boolVal);
         void setIntValue(int32_t intVal);
         void setLongValue(int64_t longVal);
-        void setTSValue(int32_t tsVal);
+        void setTSValue(OpTime tsVal);
         void setDateValue(int64_t millis);
         void setDoubleValue(double doubleVal);
         void setOIDValue(const StringData& oid);
         void setStringValue(const StringData& stringVal);
         void setRegexValue(const StringData& re);
+        void setSafeNumValue(const SafeNum& safeNum);
 
         //
         // BSONElement compatibility
@@ -183,7 +187,7 @@ namespace mutablebson {
         void appendBool(const StringData& fieldName, bool boolVal);
         void appendInt(const StringData& fieldName, int32_t intVal);
         void appendLong(const StringData& fieldName, int64_t longVal);
-        void appendTS(const StringData& fieldName, int32_t tsVal);
+        void appendTS(const StringData& fieldName, OpTime tsVal);
         void appendDate(const StringData& fieldName, int64_t millis);
         void appendDouble(const StringData& fieldName, double doubleVal);
         void appendOID(const StringData& fieldName, const mongo::OID& oid);
@@ -203,6 +207,8 @@ namespace mutablebson {
             const StringData& fieldName, const StringData& code, const StringData& scope);
         void appendBinary(
             const StringData& fieldName, uint32_t len, BinDataType t, const void* bin);
+
+        void appendSafeNum(const StringData& fieldName, const SafeNum num);
 
         //
         // operator overloading
@@ -284,13 +290,14 @@ namespace mutablebson {
         Element makeBoolElement(const StringData& fieldName, bool boolVal);
         Element makeIntElement(const StringData& fieldName, int32_t intVal);
         Element makeLongElement(const StringData& fieldName, int64_t longVal);
-        Element makeTSElement(const StringData& fieldName, int32_t tsVal);
+        Element makeTSElement(const StringData& fieldName, OpTime tsVal);
         Element makeDateElement(const StringData& fieldName, int64_t dateVal);
         Element makeDoubleElement(const StringData& fieldName, double millis);
         Element makeOIDElement(const StringData& fieldName, const mongo::OID& oid);
         Element makeStringElement(const StringData& fieldName, const StringData& stringVal);
         Element makeCodeElement(const StringData& fieldName, const StringData& code);
         Element makeSymbolElement(const StringData& fieldName, const StringData& symbol);
+        Element makeSafeNumElement(const StringData& fieldName, const SafeNum& safeNum);
 
         Element makeRegexElement(
             const StringData& fieldName, const StringData& regex, const StringData& flags);
