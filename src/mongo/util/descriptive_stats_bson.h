@@ -16,8 +16,8 @@
 #pragma once
 
 #include "mongo/db/jsobj.h"
-
 #include "mongo/util/descriptive_stats.h"
+#include "mongo/util/mongoutils/str.h"
 
 namespace mongo {
 
@@ -26,7 +26,7 @@ namespace mongo {
             const BasicEstimators<Sample>& e,
             BSONObjBuilder& b) {
 
-        b << "count" << e.count()
+        b << "count" << static_cast<long long>(e.count())
           << "mean" << e.mean()
           << "stddev" << e.stddev()
           << "min" << e.min()
@@ -43,7 +43,7 @@ namespace mongo {
 
         verify(e.quantilesReady());
 
-        for (std::size_t i = 0; i <= NumQuantiles + 1; ++i) {
+        for (std::size_t i = 0; i <= NumQuantiles + 1; i++) {
             arr << e.quantile(i);
         }
     }
@@ -54,10 +54,11 @@ namespace mongo {
         appendBasicEstimatorsToBSONObjBuilder(e, b);
         if (e.quantilesReady()) {
             BSONObjBuilder quantilesBuilder(b.subobjStart("quantiles"));
-            double quantiles[] = {.01, .02, .09, .25, .5, .75, .91, .98, .99};
-            for (int i = 0; i < 9; ++i) {
-                quantilesBuilder << std::string(str::stream() << quantiles[i]) << e.icdf(quantiles[i]);
+            for (size_t i = 1; i <= NumQuantiles; i++) {
+                quantilesBuilder.append(std::string(mongoutils::str::stream() << e.probability(i)),
+                                        e.quantile(i));
             }
+            quantilesBuilder.doneFast();
         }
         return b.obj();
     }

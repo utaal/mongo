@@ -15,7 +15,9 @@
 
 #pragma once
 
-namespace mongo {
+#include <cmath>
+
+#include "mongo/util/assert_util.h"
 
 /**
  * These classes provide online descriptive statistics estimator capable
@@ -32,10 +34,7 @@ namespace mongo {
  * It differs by being tailored for typical descriptive statistics use cases
  * thus providing a simpler (even though less flexible) interface.
  */
-// don't use this namespace directly, use the names imported in mongo:: at the end of this file
-namespace _descriptive_stats {
-
-    #include <cmath>
+namespace mongo {
 
     /**
      * Collects count, minimum and maximum, calculates mean and standard deviation.
@@ -58,7 +57,7 @@ namespace _descriptive_stats {
         /**
          * @return number of observations so far
          */
-        inline int count() const { return _count; }
+        inline size_t count() const { return _count; }
 
         /**
          * @return mean of the observations seen so far
@@ -68,9 +67,9 @@ namespace _descriptive_stats {
 
         /**
          * @return standard deviation of the observations so far
-         * NOTE: approximate, not to be trusted for small samples sizes.
+         * NOTE: estimation.
          */
-        inline double stddev() const { return std::sqrt(_variance); }
+        inline double stddev() const { return std::sqrt(_M2 / (_count - 1)); }
 
         /**
          * @return minimum observed value so far
@@ -85,9 +84,9 @@ namespace _descriptive_stats {
         inline Sample max() const { return _max; }
 
     private:
-        int _count;
+        size_t _count;
         double _mean;
-        double _variance;
+        double _M2; // sum of squares of differences from the (current) mean
         Sample _min;
         Sample _max;
     };
@@ -113,7 +112,8 @@ namespace _descriptive_stats {
          * Updates the estimators with another observed value.
          */
         inline double quantile(std::size_t i) const {
-            if (i > NumQuantiles + 1) return NAN;
+            massert(16471, "the requested value is out of the range of the computed quantiles",
+                    i <= NumQuantiles + 1);
             return this->_heights[2 * i];
         }
 
@@ -157,10 +157,10 @@ namespace _descriptive_stats {
         }
 
         /**
-         * @return value for the nearest quantile with probability < 'prob'
+         * @return value for the nearest available quantile for probability 'prob'
          */
         inline double icdf(double prob) const {
-            int quant = int(prob * (NumQuantiles + 1));
+            int quant = static_cast<int>(prob * (NumQuantiles + 1) + 0.5);
             return quantile(quant);
         }
 
@@ -200,14 +200,6 @@ namespace _descriptive_stats {
         }
     };
 
-} // namespace _descriptive_stats
-
 } // namespace mongo
 
 #include "mongo/util/descriptive_stats-inl.h"
-
-namespace mongo {
-    using _descriptive_stats::BasicEstimators;
-    using _descriptive_stats::DistributionEstimators;
-    using _descriptive_stats::SummaryEstimators;
-}
