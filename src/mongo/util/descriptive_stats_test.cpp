@@ -2,8 +2,6 @@
  * Tests for mongo/util/descriptive_stats.h
  */
 
-#include "mongo/pch.h"
-
 #include <cstdlib>
 #include <cmath>
 #include <limits>
@@ -48,7 +46,6 @@ namespace {
         ASSERT_CLOSE(d.mean(), 100000 / 2, 0.01);
         //TODO(andrea.lattuada) can we do better than ~0.001% error for stddev?
         //                      (expected stddev is ~28838.93462, current output ~28838.1)
-        PRINT(d.stddev());
         ASSERT_CLOSE(d.stddev(), sqrt((static_cast<double>(count) * count - 1) / 12), 1);
     }
 

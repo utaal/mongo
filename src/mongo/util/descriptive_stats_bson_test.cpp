@@ -10,7 +10,6 @@
 #include <string>
 
 #include "mongo/unittest/unittest.h"
-#include "mongo/util/assert_util.h"
 #include "mongo/util/descriptive_stats.h"
 #include "mongo/util/descriptive_stats_bson.h"
 
