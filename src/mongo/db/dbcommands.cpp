@@ -27,7 +27,7 @@
 
 #include "mongo/bson/util/builder.h"
 #include "mongo/db/background.h"
-#include "mongo/db/btree.h"
+#include "mongo/db/btreecursor.h"
 #include "mongo/db/commands.h"
 #include "mongo/db/db.h"
 #include "mongo/db/dur_stats.h"
@@ -722,7 +722,9 @@ namespace mongo {
             for ( list<BSONObj>::iterator i=all.begin(); i!=all.end(); i++ ) {
                 BSONObj o = *i;
                 LOG(1) << "reIndex ns: " << toDeleteNs << " index: " << o << endl;
-                theDataFileMgr.insertWithObjMod( Namespace( toDeleteNs.c_str() ).getSisterNS( "system.indexes" ).c_str() , o , true );
+                string systemIndexesNs =
+                        Namespace( toDeleteNs.c_str() ).getSisterNS( "system.indexes" );
+                theDataFileMgr.insertWithObjMod( systemIndexesNs.c_str(), o, false, true );
             }
 
             result.append( "nIndexes" , (int)all.size() );
@@ -1037,7 +1039,7 @@ namespace mongo {
                 min = Helpers::modifiedRangeBound( min , idx->keyPattern() , -1 );
                 max = Helpers::modifiedRangeBound( max , idx->keyPattern() , -1 );
 
-                c.reset( BtreeCursor::make( d, d->idxNo(*idx), *idx, min, max, false, 1 ) );
+                c.reset( BtreeCursor::make( d, *idx, min, max, false, 1 ) );
             }
 
             long long avgObjSize = d->stats.datasize / d->stats.nrecords;
@@ -1469,7 +1471,7 @@ namespace mongo {
             {
                 Lock::DBWrite lk(ns);
                 Client::Context ctx( ns );
-                theDataFileMgr.insertWithObjMod( ns.c_str(), obj, true );
+                theDataFileMgr.insertWithObjMod( ns.c_str(), obj, false, true );
             }
             return true;
         }
@@ -1517,7 +1519,12 @@ namespace mongo {
 
                 int idNum = nsd->findIdIndex();
                 if ( idNum >= 0 ) {
-                    cursor.reset( BtreeCursor::make( nsd , idNum , nsd->idx( idNum ) , BSONObj() , BSONObj() , false , 1 ) );
+                    cursor.reset( BtreeCursor::make( nsd,
+                                                     nsd->idx( idNum ),
+                                                     BSONObj(),
+                                                     BSONObj(),
+                                                     false,
+                                                     1 ) );
                 }
                 else if ( c.find( ".system." ) != string::npos ) {
                     continue;

@@ -16,6 +16,7 @@ Import("darwin windows solaris linux nix")
 env.SConscript(['base/SConscript',
                 'db/auth/SConscript',
                 'platform/SConscript',
+                's/SConscript',
                 'unittest/SConscript'])
 
 def add_exe( v ):
@@ -41,9 +42,11 @@ env.StaticLibrary('foundation',
 env.StaticLibrary('stringutils', ['util/stringutils.cpp', 'util/base64.cpp',])
 
 env.StaticLibrary('md5', [
-        'util/md5.cpp',
-        'util/md5main.cpp',
+        'util/md5.cpp'
         ])
+
+env.CppUnitTest( "md5_test", ["util/md5_test.cpp", "util/md5main.cpp" ],
+                 LIBDEPS=["md5"] )
 
 env.StaticLibrary('bson', [
         'bson/mutable/mutable_bson.cpp',
@@ -131,6 +134,13 @@ commonFiles = [ "pch.cpp",
                 "db/dbmessage.cpp"
                 ]
 
+commonSysLibdeps = []
+
+if env['MONGO_BUILD_SASL_CLIENT']:
+    commonFiles.extend(['client/sasl_client_authenticate.cpp',
+                        'util/gsasl_session.cpp'])
+    commonSysLibdeps.append('gsasl')
+
 # handle processinfo*
 processInfoFiles = [ "util/processinfo.cpp" ]
 
@@ -166,7 +176,8 @@ env.StaticLibrary('mongocommon', commonFiles,
                            'fail_point',
                            '$BUILD_DIR/third_party/pcrecpp',
                            '$BUILD_DIR/third_party/murmurhash3/murmurhash3',
-                           '$BUILD_DIR/third_party/shim_boost'],)
+                           '$BUILD_DIR/third_party/shim_boost'],
+                  SYSLIBDEPS=commonSysLibdeps)
 
 env.StaticLibrary("coredb", [
         "client/parallel.cpp",
@@ -338,6 +349,7 @@ serverOnlyFiles = [ "db/curop.cpp",
                     "db/extsort.cpp",
                     "db/index.cpp",
                     "db/index_update.cpp",
+                    "db/index_rebuilder.cpp",
                     "db/scanandorder.cpp",
                     "db/explain.cpp",
                     "db/geo/2d.cpp",

@@ -35,7 +35,6 @@ _ disallow system* manipulations from the database.
 #include "mongo/db/pdfile_private.h"
 #include "mongo/db/background.h"
 #include "mongo/db/btree.h"
-#include "mongo/db/btreebuilder.h"
 #include "mongo/db/commands/server_status.h"
 #include "mongo/db/compact.h"
 #include "mongo/db/curop-inl.h"
@@ -159,7 +158,7 @@ namespace mongo {
         if ( ( strstr( ns, ".system." ) == 0 || legalClientSystemNS( ns , false ) ) &&
                 strstr( ns, FREELIST_NS ) == 0 ) {
             LOG( 1 ) << "adding _id index for collection " << ns << endl;
-            ensureHaveIdIndex( ns );
+            ensureHaveIdIndex( ns, false );
         }
     }
 
@@ -1134,7 +1133,7 @@ namespace mongo {
             uassert( 10003 , "failing update: objects in a capped ns cannot grow", !(d && d->isCapped()));
             d->paddingTooSmall();
             deleteRecord(ns, toupdate, dl);
-            DiskLoc res = insert(ns, objNew.objdata(), objNew.objsize(), god);
+            DiskLoc res = insert(ns, objNew.objdata(), objNew.objsize(), false, god);
 
             if (debug.nmoved == -1) // default of -1 rather than 0
                 debug.nmoved = 1;
@@ -1259,21 +1258,19 @@ namespace mongo {
 
     void DataFileMgr::insertAndLog( const char *ns, const BSONObj &o, bool god, bool fromMigrate ) {
         BSONObj tmp = o;
-        insertWithObjMod( ns, tmp, god );
+        insertWithObjMod( ns, tmp, false, god );
         logOp( "i", ns, tmp, 0, 0, fromMigrate );
     }
 
     /** @param o the object to insert. can be modified to add _id and thus be an in/out param
      */
-    DiskLoc DataFileMgr::insertWithObjMod(const char *ns, BSONObj &o, bool god) {
+    DiskLoc DataFileMgr::insertWithObjMod(const char* ns, BSONObj& o, bool mayInterrupt, bool god) {
         bool addedID = false;
-        DiskLoc loc = insert( ns, o.objdata(), o.objsize(), god, true, &addedID );
+        DiskLoc loc = insert( ns, o.objdata(), o.objsize(), mayInterrupt, god, true, &addedID );
         if( addedID && !loc.isNull() )
             o = BSONObj::make( loc.rec() );
         return loc;
     }
-
-    bool prepareToBuildIndex(const BSONObj& io, bool god, string& sourceNS, NamespaceDetails *&sourceCollection, BSONObj& fixedIndexObject );
 
     // We are now doing two btree scans for all unique indexes (one here, and one when we've
     // written the record to the collection.  This could be made more efficient inserting
@@ -1390,7 +1387,10 @@ namespace mongo {
         return d;
     }
 
-    void NOINLINE_DECL insert_makeIndex(NamespaceDetails *tableToIndex, const string& tabletoidxns, const DiskLoc& loc) { 
+    void NOINLINE_DECL insert_makeIndex(NamespaceDetails* tableToIndex,
+                                        const string& tabletoidxns,
+                                        const DiskLoc& loc,
+                                        bool mayInterrupt) {
         uassert( 13143 , "can't create index on system.indexes" , tabletoidxns.find( ".system.indexes" ) == string::npos );
 
         BSONObj info = loc.obj();
@@ -1404,49 +1404,69 @@ namespace mongo {
         }
 
         int idxNo = tableToIndex->nIndexes;
-        IndexDetails& idx = tableToIndex->addIndex(tabletoidxns.c_str(), !background); // clear transient info caches so they refresh; increments nIndexes
-        getDur().writingDiskLoc(idx.info) = loc;
+
         try {
-            buildAnIndex(tabletoidxns, tableToIndex, idx, idxNo, background);
+            IndexDetails& idx = tableToIndex->getNextIndexDetails(tabletoidxns.c_str());
+            // It's important that this is outside the inner try/catch so that we never try to call
+            // kill_idx on a half-formed disk loc (if this asserts).
+            getDur().writingDiskLoc(idx.info) = loc;
+
+            try {
+                getDur().writingInt(tableToIndex->indexBuildInProgress) = 1;
+                buildAnIndex(tabletoidxns, tableToIndex, idx, idxNo, background, mayInterrupt);
+            }
+            catch (DBException& e) {
+                // save our error msg string as an exception or dropIndexes will overwrite our message
+                LastError *le = lastError.get();
+                int savecode = 0;
+                string saveerrmsg;
+                if ( le ) {
+                    savecode = le->code;
+                    saveerrmsg = le->msg;
+                }
+                else {
+                    savecode = e.getCode();
+                    saveerrmsg = e.what();
+                }
+
+                // roll back this index
+                idx.kill_idx();
+
+                verify(le && !saveerrmsg.empty());
+                setLastError(savecode,saveerrmsg.c_str());
+                throw;
+            }
+
+            // clear transient info caches so they refresh; increments nIndexes
+            tableToIndex->addIndex(tabletoidxns.c_str());
+            getDur().writingInt(tableToIndex->indexBuildInProgress) = 0;
         }
-        catch( DBException& e ) {
-            // save our error msg string as an exception or dropIndexes will overwrite our message
-            LastError *le = lastError.get();
-            int savecode = 0;
-            string saveerrmsg;
-            if ( le ) {
-                savecode = le->code;
-                saveerrmsg = le->msg;
-            }
-            else {
-                savecode = e.getCode();
-                saveerrmsg = e.what();
+        catch (...) {
+            // Generally, this will be called as an exception from building the index bubbles up.
+            // Thus, the index will have already been cleaned up.  This catch just ensures that the
+            // metadata is consistent on any exception. It may leak like a sieve if the index
+            // successfully finished building and addIndex or kill_idx threw.
+
+            // Check if nIndexes was incremented
+            if (idxNo < tableToIndex->nIndexes) {
+                // TODO: this will have to change when we can have multiple simultanious index
+                // builds
+                getDur().writingInt(tableToIndex->nIndexes) -= 1;
             }
 
-            // roll back this index
-            string name = idx.indexName();
-            BSONObjBuilder b;
-            string errmsg;
-            bool ok = dropIndexes(tableToIndex, tabletoidxns.c_str(), name.c_str(), errmsg, b, true);
-            if( !ok ) {
-                log() << "failed to drop index after a unique key error building it: " << errmsg << ' ' << tabletoidxns << ' ' << name << endl;
-            }
+            getDur().writingInt(tableToIndex->indexBuildInProgress) = 0;
 
-            verify( le && !saveerrmsg.empty() );
-            setLastError(savecode,saveerrmsg.c_str());
             throw;
         }
     }
 
-    /* if god==true, you may pass in obuf of NULL and then populate the returned DiskLoc
-         after the call -- that will prevent a double buffer copy in some cases (btree.cpp).
-
-       @param mayAddIndex almost always true, except for invocation from rename namespace command.
-       @param addedID if not null, set to true if adding _id element. you must assure false before calling
-              if using.
-    */
-
-    DiskLoc DataFileMgr::insert(const char *ns, const void *obuf, int len, bool god, bool mayAddIndex, bool *addedID) {
+    DiskLoc DataFileMgr::insert(const char* ns,
+                                const void* obuf,
+                                int32_t len,
+                                bool mayInterrupt,
+                                bool god,
+                                bool mayAddIndex,
+                                bool* addedID) {
         bool wouldAddIndex = false;
         massert( 10093 , "cannot insert into reserved $ collection", god || NamespaceString::normal( ns ) );
         uassert( 10094 , str::stream() << "invalid ns: " << ns , isValidNS( ns ) );
@@ -1469,7 +1489,12 @@ namespace mongo {
         if ( addIndex ) {
             verify( obuf );
             BSONObj io((const char *) obuf);
-            if( !prepareToBuildIndex(io, god, tabletoidxns, tableToIndex, fixedIndexObject ) ) {
+            if( !prepareToBuildIndex(io,
+                                     mayInterrupt,
+                                     god,
+                                     tabletoidxns,
+                                     tableToIndex,
+                                     fixedIndexObject) ) {
                 // prepare creates _id itself, or this indicates to fail the build silently (such 
                 // as if index already exists)
                 return DiskLoc();
@@ -1583,7 +1608,7 @@ namespace mongo {
             NamespaceDetailsTransient::get( ns ).notifyOfWriteOp();
 
         if ( tableToIndex ) {
-            insert_makeIndex(tableToIndex, tabletoidxns, loc);
+            insert_makeIndex(tableToIndex, tabletoidxns, loc, mayInterrupt);
         }
 
         /* add this record to our indexes */
