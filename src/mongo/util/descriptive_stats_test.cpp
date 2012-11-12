@@ -2,7 +2,7 @@
  * Tests for mongo/util/descriptive_stats.h
  */
 
-#include "pch.h"
+#include "mongo/pch.h"
 
 #include <cstdlib>
 #include <cmath>
@@ -12,10 +12,12 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/descriptive_stats.h"
 
+using namespace std;
+
 namespace {
 
     TEST(DistributionEstimators, TestNominalResults) {
-        DistributionEstimators<99> d;
+        mongo::DistributionEstimators<99> d;
 
         for (int i = 0; i < 100000; ++i) {
             d << double(i) / 100000;
@@ -23,7 +25,7 @@ namespace {
         ASSERT_TRUE(d.quantilesReady());
         for (size_t quant = 1; quant <= 99; ++quant) {
             ASSERT_EQUALS(d.probability(quant), double(quant) / 100);
-            ASSERT_CLOSE(d.quantile(quant), double(quant) / 100, 0.05)
+            ASSERT_CLOSE(d.quantile(quant), double(quant) / 100, 0.05);
             double prob = double(quant) / 100;
             ASSERT_CLOSE(d.icdf(prob), prob, 0.05);
         }
@@ -33,7 +35,7 @@ namespace {
     }
 
     TEST(BasicEstimators, TestNominalResults) {
-        BasicEstimators<unsigned int> d;
+        mongo::BasicEstimators<unsigned int> d;
 
         // [50, 51, 52, ..., 99949, 99950]
         for (int i = 50; i <= 100000 - 50; ++i) {
@@ -46,7 +48,7 @@ namespace {
     }
 
     TEST(SummaryEstimators, TestNominalResults) {
-        SummaryEstimators<int, 99> d;
+        mongo::SummaryEstimators<int, 99> d;
 
         for (int a = -200; a <= 200; ++a) {
             d << a;

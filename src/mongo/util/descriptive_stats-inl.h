@@ -49,37 +49,27 @@ namespace mongo {
 namespace _descriptive_stats {
 
     #include <algorithm>
+    #include <limits>
 
     template <class Sample>
-    BasicEstimators<Sample>::BasicEstimators() : _count(0) {
+    BasicEstimators<Sample>::BasicEstimators() :
+            _count(0),
+            _sum(0),
+            _diff(0),
+            _min(std::numeric_limits<Sample>::max()),
+            _max(std::numeric_limits<Sample>::min()) {
+
     }
 
     template <class Sample>
     BasicEstimators<Sample>& BasicEstimators<Sample>::operator <<(const Sample sample) {
-
-        if (this->_count++ == 0) {
-            this->_min = sample;
-            this->_max = sample;
-            this->_mean = double(sample);
-            this->_variance = 0.;
-            return *this;
-        }
-
-        this->_min = std::min(sample, this->_min);
-        this->_max = std::max(sample, this->_max);
-
-        // count already incremented
-
-        // iterative calculation of the mean
-        this->_mean = double(this->_mean * (this->_count - 1) + sample) / this->_count;
-        double tmp = sample - this->_mean;
-
-        // iterative calculation of the variance
-        // (for the recurrence used refer to
-        //  http://www.boost.org/doc/libs/1_51_0/doc/html/boost/accumulators/impl/variance_impl.html)
-        this->_variance = double(this->_variance * (this->_count - 1)) / this->_count +
-                          double(tmp * tmp) / (this->_count - 1);
-
+        _min = std::min(sample, _min);
+        _max = std::max(sample, _max);
+        _sum += sample;
+        const double delta = sample - mean();
+        const double weight = static_cast<double>(_count) / (_count + 1);
+        _diff += delta * delta * weight;
+        _count++;
         return *this;
     }
 
@@ -87,15 +77,12 @@ namespace _descriptive_stats {
     DistributionEstimators<NumQuantiles>::DistributionEstimators() :
             _count(0) {
 
-        for(std::size_t i = 0; i < NumMarkers; ++i)
-        {
-            this->_actual_positions[i] = i + 1;
+        for(std::size_t i = 0; i < NumMarkers; i++) {
+            _actual_positions[i] = i + 1;
         }
 
-        for(std::size_t i = 0; i < NumMarkers; ++i)
-        {
-            this->_desired_positions[i] =
-                        1. + 2. * (NumQuantiles + 1.) * this->_positions_increments(i);
+        for(std::size_t i = 0; i < NumMarkers; i++) {
+            _desired_positions[i] = 1.0 + (2.0 * (NumQuantiles + 1.0) * _positions_increments(i));
         }
     }
 
@@ -113,88 +100,85 @@ namespace _descriptive_stats {
 
         // first accumulate num_markers samples
         if (_count++ < NumMarkers) {
-            this->_heights[_count - 1] = sample;
+            _heights[_count - 1] = sample;
 
             if (_count == NumMarkers)
             {
-                std::sort(this->_heights, this->_heights + NumMarkers);
+                std::sort(_heights, _heights + NumMarkers);
             }
         }
         else {
             std::size_t sample_cell = 1;
 
             // find cell k = sample_cell such that heights[k-1] <= sample < heights[k]
-            if(sample < this->_heights[0])
+            if(sample < _heights[0])
             {
-                this->_heights[0] = sample;
+                _heights[0] = sample;
                 sample_cell = 1;
             }
-            else if (sample >= this->_heights[NumMarkers - 1])
+            else if (sample >= _heights[NumMarkers - 1])
             {
-                this->_heights[NumMarkers - 1] = sample;
+                _heights[NumMarkers - 1] = sample;
                 sample_cell = NumMarkers - 1;
             }
             else {
-                double* it = std::upper_bound(this->_heights,
-                                              this->_heights + NumMarkers,
+                double* it = std::upper_bound(_heights,
+                                              _heights + NumMarkers,
                                               sample);
 
-                sample_cell = std::distance(this->_heights, it);
+                sample_cell = std::distance(_heights, it);
             }
 
             // update actual positions of all markers above sample_cell index
-            for(std::size_t i = sample_cell; i < NumMarkers; ++i)
-            {
-                ++this->_actual_positions[i];
+            for(std::size_t i = sample_cell; i < NumMarkers; i++) {
+                _actual_positions[i]++;
             }
 
             // update desired positions of all markers
-            for(std::size_t i = 0; i < NumMarkers; ++i)
-            {
-                this->_desired_positions[i] += this->_positions_increments(i);
+            for(std::size_t i = 0; i < NumMarkers; ++i) {
+                _desired_positions[i] += _positions_increments(i);
             }
 
             // adjust heights and actual positions of markers 1 to num_markers-2 if necessary
-            for(std::size_t i = 1; i <= NumMarkers - 2; ++i)
-            {
+            for(std::size_t i = 1; i <= NumMarkers - 2; ++i) {
                 // offset to desired position
-                double d = this->_desired_positions[i] - this->_actual_positions[i];
+                double d = _desired_positions[i] - _actual_positions[i];
 
                 // offset to next position
-                double dp = this->_actual_positions[i + 1] - this->_actual_positions[i];
+                double dp = _actual_positions[i + 1] - _actual_positions[i];
 
                 // offset to previous position
-                double dm = this->_actual_positions[i - 1] - this->_actual_positions[i];
+                double dm = _actual_positions[i - 1] - _actual_positions[i];
 
                 // height ds
-                double hp = (this->_heights[i + 1] - this->_heights[i]) / dp;
-                double hm = (this->_heights[i - 1] - this->_heights[i]) / dm;
+                double hp = (_heights[i + 1] - _heights[i]) / dp;
+                double hm = (_heights[i - 1] - _heights[i]) / dm;
 
                 if((d >= 1 && dp > 1) || (d <= -1 && dm < -1))
                 {
                     short sign_d = static_cast<short>(d / std::abs(d));
 
-                    double h = this->_heights[i] + sign_d / (dp - dm) * ((sign_d - dm)*hp
+                    double h = _heights[i] + sign_d / (dp - dm) * ((sign_d - dm)*hp
                                + (dp - sign_d) * hm);
 
                     // try adjusting heights[i] using p-squared formula
-                    if(this->_heights[i - 1] < h && h < this->_heights[i + 1])
+                    if(_heights[i - 1] < h && h < _heights[i + 1])
                     {
-                        this->_heights[i] = h;
+                        _heights[i] = h;
                     }
                     else
                     {
                         // use linear formula
                         if(d > 0)
                         {
-                            this->_heights[i] += hp;
+                            _heights[i] += hp;
                         }
                         if(d < 0)
                         {
-                            this->_heights[i] -= hm;
+                            _heights[i] -= hm;
                         }
                     }
-                    this->_actual_positions[i] += sign_d;
+                    _actual_positions[i] += sign_d;
                 }
             }
         }
@@ -204,7 +188,7 @@ namespace _descriptive_stats {
 
     template <std::size_t NumQuantiles>
     inline double DistributionEstimators<NumQuantiles>::_positions_increments(std::size_t i) const {
-        return double(i) / (2 * (NumQuantiles + 1));
+        return static_cast<double>(i) / (2 * (NumQuantiles + 1));
     }
 
 } // namespace _descriptive_stats

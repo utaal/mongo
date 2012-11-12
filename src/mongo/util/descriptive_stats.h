@@ -61,16 +61,22 @@ namespace _descriptive_stats {
         inline int count() const { return _count; }
 
         /**
+         * @return sum of the observations seen so far
+         * NOTE: exact (within the limits of IEEE floating point precision).
+         */
+        inline double sum() const { return _sum; }
+
+        /**
          * @return mean of the observations seen so far
          * NOTE: exact (within the limits of IEEE floating point precision).
          */
-        inline double mean() const { return _mean; }
+        inline double mean() const { return static_cast<double>(_sum) / _count; }
 
         /**
          * @return standard deviation of the observations so far
-         * NOTE: approximate, not to be trusted for small samples sizes.
+         * NOTE: exact (within the limits of IEEE floating point precision).
          */
-        inline double stddev() const { return std::sqrt(_variance); }
+        inline double stddev() const { return std::sqrt(_diff / _count); }
 
         /**
          * @return minimum observed value so far
@@ -86,8 +92,8 @@ namespace _descriptive_stats {
 
     private:
         int _count;
-        double _mean;
-        double _variance;
+        double _sum;
+        double _diff; // sum of 2nd moment
         Sample _min;
         Sample _max;
     };
