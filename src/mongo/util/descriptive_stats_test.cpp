@@ -19,7 +19,7 @@ namespace {
     TEST(DistributionEstimators, TestNominalResults) {
         mongo::DistributionEstimators<99> d;
 
-        for (int i = 0; i < 100000; ++i) {
+        for (int i = 0; i < 100000; i++) {
             d << double(i) / 100000;
         }
         ASSERT_TRUE(d.quantilesReady());
@@ -37,20 +37,25 @@ namespace {
     TEST(BasicEstimators, TestNominalResults) {
         mongo::BasicEstimators<unsigned int> d;
 
+        unsigned int count = 0;
         // [50, 51, 52, ..., 99949, 99950]
-        for (int i = 50; i <= 100000 - 50; ++i) {
+        for (int i = 50; i <= 100000 - 50; i++) {
             d << unsigned(i);
+            count++;
         }
+        ASSERT_EQUALS(d.count(), count);
         ASSERT_EQUALS(d.min(), 50u);
         ASSERT_EQUALS(d.max(), 100000u - 50u);
         ASSERT_CLOSE(d.mean(), 100000 / 2, 0.01);
-        ASSERT_CLOSE(d.stddev(), 28838.9346, 0.0001);
+        //TODO(andrea.lattuada) can we do better than ~0.001% error for stddev?
+        //                      (expected stddev is ~28838.93462)
+        ASSERT_CLOSE(d.stddev(), sqrt((static_cast<double>(count) * count - 1) / 12), 1);
     }
 
     TEST(SummaryEstimators, TestNominalResults) {
         mongo::SummaryEstimators<int, 99> d;
 
-        for (int a = -200; a <= 200; ++a) {
+        for (int a = -200; a <= 200; a++) {
             d << a;
         }
         ASSERT_TRUE(d.quantilesReady());

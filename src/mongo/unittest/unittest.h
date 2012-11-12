@@ -81,8 +81,9 @@
  * values.
  */
 #define ASSERT_CLOSE(a,b,PRECISION) ::mongo::unittest::TestAssertion(__FILE__, __LINE__).failIf( \
-            (std::abs(a - b) > PRECISION), "Expected " #a " and " #b " to be close " \
-            "(difference <= " #PRECISION ")")
+            (a != a || b != b || std::abs(a - b) > PRECISION), \
+            (mongoutils::str::stream() << "Expected " #a " and " #b " to be within " #PRECISION \
+             " of each other (" << a << " ~ " << b << ")"))
 
 /**
  * Verify that the evaluation of "EXPRESSION" throws an exception of type EXCEPTION_TYPE.
