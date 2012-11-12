@@ -63,13 +63,13 @@ namespace mongo {
          * @return mean of the observations seen so far
          * NOTE: exact (within the limits of IEEE floating point precision).
          */
-        inline double mean() const { return _mean; }
+        inline double mean() const { return _sum / _count; }
 
         /**
          * @return standard deviation of the observations so far
-         * NOTE: estimation.
+         * NOTE: exact (within the limits of IEEE floating point precision).
          */
-        inline double stddev() const { return std::sqrt(_M2 / (_count - 1)); }
+        inline double stddev() const { return std::sqrt(_diff / _count); }
 
         /**
          * @return minimum observed value so far
@@ -85,8 +85,8 @@ namespace mongo {
 
     private:
         size_t _count;
-        double _mean;
-        double _M2; // sum of squares of differences from the (current) mean
+        double _sum;
+        double _diff; // sum of squares of differences from the (current) mean
         Sample _min;
         Sample _max;
     };
