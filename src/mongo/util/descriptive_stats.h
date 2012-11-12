@@ -86,7 +86,7 @@ namespace mongo {
     private:
         size_t _count;
         double _sum;
-        double _diff; // sum of squares of differences from the (current) mean
+        double _diff; // sum of squares of differences from the (then-current) mean
         Sample _min;
         Sample _max;
     };

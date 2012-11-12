@@ -43,8 +43,8 @@ namespace {
         }
         ASSERT_EQUALS(d.min(), 50u);
         ASSERT_EQUALS(d.max(), 100000u - 50u);
-        ASSERT_EQUALS(d.mean(), 100000 / 2);
-        ASSERT_EQUALS(d.stddev(), sqrt((static_cast<double>(count) * count - 1) / 12));
+        ASSERT_CLOSE(d.mean(), 100000 / 2, 1e-15);
+        ASSERT_CLOSE(d.stddev(), sqrt((static_cast<double>(count) * count - 1) / 12), 1e-15);
     }
 
     TEST(SummaryEstimators, TestNominalResults) {
@@ -56,8 +56,8 @@ namespace {
         ASSERT_TRUE(d.quantilesReady());
         ASSERT_EQUALS(d.min(), -200);
         ASSERT_EQUALS(d.max(), 200);
-        ASSERT_CLOSE(d.mean(), 0, 0.001);
-        ASSERT_CLOSE(d.icdf(.25), -100, 1);
+        ASSERT_CLOSE(d.mean(), 0, 1e-15);
+        ASSERT_CLOSE(d.icdf(.25), -100, 1e-15);
     }
 
 }  // namespace
