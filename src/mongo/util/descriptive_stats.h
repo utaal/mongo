@@ -216,6 +216,9 @@ namespace mongo {
             return this->BasicEstimators<Sample>::max();
         }
 
+        /**
+         * @return a summary of the computed estimators as a BSONObj.
+         */
         BSONObj statisticSummaryToBSONObj();
     };
 
