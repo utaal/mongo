@@ -60,22 +60,16 @@ namespace mongo {
         inline size_t count() const { return _count; }
 
         /**
-         * @return sum of the observations seen so far
-         * NOTE: exact (within the limits of IEEE floating point precision).
-         */
-        inline double sum() const { return _sum; }
-
-        /**
          * @return mean of the observations seen so far
          * NOTE: exact (within the limits of IEEE floating point precision).
          */
-        inline double mean() const { return static_cast<double>(_sum) / _count; }
+        inline double mean() const { return _mean; }
 
         /**
          * @return standard deviation of the observations so far
-         * NOTE: exact (within the limits of IEEE floating point precision).
+         * NOTE: estimation.
          */
-        inline double stddev() const { return std::sqrt(_diff / _count); }
+        inline double stddev() const { return std::sqrt(_M2 / (_count - 1)); }
 
         /**
          * @return minimum observed value so far
@@ -91,8 +85,8 @@ namespace mongo {
 
     private:
         size_t _count;
-        double _sum;
-        double _diff; // sum of 2nd moment
+        double _mean;
+        double _M2; // sum of squares of differences from the (current) mean
         Sample _min;
         Sample _max;
     };

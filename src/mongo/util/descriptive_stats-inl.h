@@ -29,8 +29,8 @@ namespace mongo {
     template <class Sample>
     BasicEstimators<Sample>::BasicEstimators() :
             _count(0),
-            _sum(0),
-            _diff(0),
+            _mean(0),
+            _M2(0),
             _min(std::numeric_limits<Sample>::max()),
             _max(std::numeric_limits<Sample>::min()) {
 
@@ -40,11 +40,14 @@ namespace mongo {
     BasicEstimators<Sample>& BasicEstimators<Sample>::operator <<(const Sample sample) {
         _min = std::min(sample, _min);
         _max = std::max(sample, _max);
-        _sum += sample;
-        const double delta = (_count > 0) ? sample - mean() : 0;
-        const double weight = static_cast<double>(_count) / (_count + 1);
-        _diff += delta * delta * weight;
+
+        // Online estimation of mean and variance using Knuth's algorithm
+        // See http://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Online_algorithm
         _count++;
+        const double delta = static_cast<double>(sample) - _mean;
+        _mean += delta / _count;
+        _M2 += delta * (static_cast<double>(sample) - _mean);
+
         return *this;
     }
 
