@@ -9,19 +9,12 @@
 #include <limits>
 #include <string>
 
-#include "dbtests.h"
+#include "mongo/unittest/unittest.h"
 #include "mongo/util/descriptive_stats.h"
 
 namespace {
 
-    bool areClose(double a, double b, double tolerance) {
-        return std::abs(a - b) < tolerance;
-    }
-
-    TEST(descriptive_stats, DoNothing) {
-    }
-
-    TEST(descriptive_stats, TestDistributionEstimators) {
+    TEST(DistributionEstimators, TestNominalResults) {
         DistributionEstimators<99> d;
 
         for (int i = 0; i < 100000; ++i) {
@@ -30,16 +23,16 @@ namespace {
         ASSERT_TRUE(d.quantilesReady());
         for (size_t quant = 1; quant <= 99; ++quant) {
             ASSERT_EQUALS(d.probability(quant), double(quant) / 100);
-            ASSERT_TRUE(areClose(d.quantile(quant), double(quant) / 100, .05));
+            ASSERT_CLOSE(d.quantile(quant), double(quant) / 100, 0.05)
             double prob = double(quant) / 100;
-            ASSERT_TRUE(areClose(d.icdf(prob), prob, .05));
+            ASSERT_CLOSE(d.icdf(prob), prob, 0.05);
         }
-        ASSERT_TRUE(areClose(d.min(), 0., .05));
-        ASSERT_TRUE(areClose(d.max(), 1., .05));
-        ASSERT_TRUE(areClose(d.median(), .5, .05));
+        ASSERT_CLOSE(d.min(), 0.0, 0.05);
+        ASSERT_CLOSE(d.max(), 1.0, 0.05);
+        ASSERT_CLOSE(d.median(), 0.5, 0.05);
     }
 
-    TEST(descriptive_stats, TestBasicEstimators) {
+    TEST(BasicEstimators, TestNominalResults) {
         BasicEstimators<unsigned int> d;
 
         // [50, 51, 52, ..., 99949, 99950]
@@ -48,11 +41,11 @@ namespace {
         }
         ASSERT_EQUALS(d.min(), 50u);
         ASSERT_EQUALS(d.max(), 100000u - 50u);
-        ASSERT_TRUE(areClose(d.mean(), 100000 / 2, .01));
-        ASSERT_TRUE(areClose(d.stddev(), 28838.93461, .0001));
+        ASSERT_CLOSE(d.mean(), 100000 / 2, 0.01);
+        ASSERT_CLOSE(d.stddev(), 28838.9346, 0.0001);
     }
 
-    TEST(descriptive_stats, SummaryEstimators) {
+    TEST(SummaryEstimators, TestNominalResults) {
         SummaryEstimators<int, 99> d;
 
         for (int a = -200; a <= 200; ++a) {
@@ -61,8 +54,8 @@ namespace {
         ASSERT_TRUE(d.quantilesReady());
         ASSERT_EQUALS(d.min(), -200);
         ASSERT_EQUALS(d.max(), 200);
-        ASSERT_TRUE(areClose(d.mean(), 0, .001));
-        ASSERT_TRUE(areClose(d.icdf(.25), -100, 1));
+        ASSERT_CLOSE(d.mean(), 0, 0.001);
+        ASSERT_CLOSE(d.icdf(.25), -100, 1);
     }
 
 }  // namespace

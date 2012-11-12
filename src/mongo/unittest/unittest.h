@@ -77,6 +77,14 @@
             #a, #b , __FILE__ , __LINE__ ).assert##COMPARISON( (a), (b) )
 
 /**
+ * Approximate equality assertion. Useful for comparisons on limited precision floating point
+ * values.
+ */
+#define ASSERT_CLOSE(a,b,PRECISION) ::mongo::unittest::TestAssertion(__FILE__, __LINE__).failIf( \
+            (std::abs(a - b) > PRECISION), "Expected " #a " and " #b " to be close " \
+            "(difference <= " #PRECISION ")")
+
+/**
  * Verify that the evaluation of "EXPRESSION" throws an exception of type EXCEPTION_TYPE.
  *
  * If "EXPRESSION" throws no exception, or one that is neither of type "EXCEPTION_TYPE" nor
