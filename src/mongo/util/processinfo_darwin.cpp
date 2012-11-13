@@ -185,7 +185,7 @@ namespace mongo {
         return true;
     }
 
-    bool ProcessInfo::blockInMemory(const void * start) {
+    bool ProcessInfo::blockInMemory(const void* start) {
         char x = 0;
         if (mincore(alignToStartOfPage(start), getPageSize(), &x)) {
             log() << "mincore failed: " << errnoWithDescription() << endl;

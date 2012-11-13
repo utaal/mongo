@@ -152,7 +152,7 @@ namespace mongo {
 
     bool ProcessInfo::blockInMemory(const void* start) {
          char x = 0;
-         if (mincore(const_cast<void*>(alignToStartOfPage(start)), getPageSize(), &x)) {
+         if (mincore(alignToStartOfPage(start), getPageSize(), &x)) {
              log() << "mincore failed: " << errnoWithDescription() << endl;
              return 1;
          }
@@ -162,7 +162,7 @@ namespace mongo {
     bool ProcessInfo::pagesInMemory(const void* start, size_t numPages, vector<char>* out) {
         out->resize(numPages);
         // int mincore(const void *addr, size_t len, char *vec);
-        if (mincore(const_cast<void*>(alignToStartOfPage(start)), numPages * getPageSize(),
+        if (mincore(alignToStartOfPage(start), numPages * getPageSize(),
                     &(out->front()))) {
             log() << "mincore failed: " << errnoWithDescription() << endl;
             return false;

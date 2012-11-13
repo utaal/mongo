@@ -16,6 +16,8 @@
 
 #include <vector>
 
+#include "boost/scoped_array.hpp"
+
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/processinfo.h"
 
@@ -39,9 +41,8 @@ namespace mongo_test {
 
     TEST(ProcessInfo, BlockInMemoryDoesNotThrowIfSupported) {
         if (ProcessInfo::blockCheckSupported()) {
-            char* ptr = new char[ProcessInfo::getPageSize() * PAGES];
-            ProcessInfo::blockInMemory(ptr + ProcessInfo::getPageSize() * 2);
-            delete[] ptr;
+            boost::scoped_array<char> ptr(new char[ProcessInfo::getPageSize() * PAGES]);
+            ProcessInfo::blockInMemory(ptr.get() + ProcessInfo::getPageSize() * 2);
         }
     }
 

@@ -225,7 +225,7 @@ namespace mongo {
     }
 
     bool ProcessInfo::pagesInMemory(const void* start, size_t numPages, vector<char>* out) {
-        our->resize(numPages);
+        out->resize(numPages);
         scoped_array<PSAPI_WORKING_SET_EX_INFORMATION> wsinfo(
                 new PSAPI_WORKING_SET_EX_INFORMATION[numPages]);
 
