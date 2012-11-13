@@ -52,7 +52,7 @@ namespace mongo {
     }
 
     template <class Sample>
-    void BasicEstimators<Sample>::appendBasicToBSONObjBuilder(BSONObjBuilder& b) {
+    void BasicEstimators<Sample>::appendBasicToBSONObjBuilder(BSONObjBuilder& b) const {
         b << "count" << static_cast<long long>(count())
           << "mean" << mean()
           << "stddev" << stddev()
@@ -175,7 +175,7 @@ namespace mongo {
 
     template <std::size_t NumQuantiles>
     void DistributionEstimators<NumQuantiles>::appendQuantilesToBSONArrayBuilder(
-            BSONArrayBuilder& arr) {
+            BSONArrayBuilder& arr) const {
 
         verify(quantilesReady());
         for (std::size_t i = 0; i <= NumQuantiles + 1; i++) {
@@ -189,7 +189,7 @@ namespace mongo {
     }
 
     template <class Sample, std::size_t NumQuantiles>
-    BSONObj SummaryEstimators<Sample, NumQuantiles>::statisticSummaryToBSONObj() {
+    BSONObj SummaryEstimators<Sample, NumQuantiles>::statisticSummaryToBSONObj() const {
         BSONObjBuilder b;
         this->BasicEstimators<Sample>::appendBasicToBSONObjBuilder(b);
         if (this->DistributionEstimators<NumQuantiles>::quantilesReady()) {

@@ -87,7 +87,7 @@ namespace mongo {
         /**
          * Appends the basic estimators to the provided BSONObjBuilder.
          */
-        void appendBasicToBSONObjBuilder(BSONObjBuilder& b);
+        void appendBasicToBSONObjBuilder(BSONObjBuilder& b) const;
 
     private:
         size_t _count;
@@ -179,7 +179,7 @@ namespace mongo {
          * Appends the quantiles to the provided BSONArrayBuilder.
          * REQUIRES e.quantilesReady() == true
          */
-        void appendQuantilesToBSONArrayBuilder(BSONArrayBuilder& arr);
+        void appendQuantilesToBSONArrayBuilder(BSONArrayBuilder& arr) const;
 
     private:
         inline double _positions_increments(std::size_t i) const;
@@ -219,7 +219,7 @@ namespace mongo {
         /**
          * @return a summary of the computed estimators as a BSONObj.
          */
-        BSONObj statisticSummaryToBSONObj();
+        BSONObj statisticSummaryToBSONObj() const;
     };
 
 } // namespace mongo
