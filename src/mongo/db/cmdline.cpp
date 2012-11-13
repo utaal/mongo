@@ -103,7 +103,9 @@ namespace {
         
         // Extra hidden options
         hidden.add_options()
-        ("traceExceptions", "log stack traces for every exception");
+        ("traceExceptions", "log stack traces for every exception")
+        ("enableExperimentalIndexStatsCmd", "EXPERIMENTAL (UNSUPPORTED). Enable command computing aggregate statistics on indexes.")
+        ;
     }
 
 #if defined(_WIN32)
@@ -290,6 +292,8 @@ namespace {
         if (params.count("traceExceptions")) {
             DBException::traceExceptions = true;
         }
+
+        cmdLine.experimental.indexStatsCmdEnabled = params.count("enableExperimentalIndexStatsCmd");
 
         if (params.count("maxConns")) {
             cmdLine.maxConns = params["maxConns"].as<int>();

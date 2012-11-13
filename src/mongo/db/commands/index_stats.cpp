@@ -26,6 +26,7 @@
 #include <boost/noncopyable.hpp>
 #include <boost/optional.hpp>
 
+#include "mongo/base/init.h"
 #include "mongo/db/btree.h"
 #include "mongo/db/commands.h"
 #include "mongo/db/db.h"
@@ -471,11 +472,13 @@ namespace mongo {
         }
 
         virtual void help(stringstream& h) const {
-            h << "Provides detailed and aggregate information and statistics for a btree. "
+            h << "EXPERIMENTAL. "
+              << "Provides detailed and aggregate information and statistics for a btree. "
               << "The entire btree is walked on every call. This command takes a read lock, "
               << "requires the entire btree storage to be paged-in and will be slow on large "
               << "indexes. Requires an index name in {index: '_name'} and optionally an array "
               << "of the nodes to be expanded, such as {expandNodes: [0, 3]}.";
+        }
 
         virtual LockType locktype() const { return READ; }
 
@@ -525,6 +528,15 @@ namespace mongo {
             return true;
         }
 
-    } indexStatsCmd;
+    };
+
+    MONGO_INITIALIZER(IndexStatsCmd)(InitializerContext* context) {
+        if (cmdLine.experimental.indexStatsCmdEnabled) {
+            // leaked intentionally
+            new IndexStatsCmd();
+        }
+        return Status::OK();
+    }
 
 } // namespace mongo
+
