@@ -476,6 +476,7 @@ namespace mongo {
               << "requires the entire btree storage to be paged-in and will be slow on large "
               << "indexes. Requires an index name in {index: '_name'} and optionally an array "
               << "of the nodes to be expanded, such as {expandNodes: [0, 3]}.";
+        }
 
         virtual LockType locktype() const { return READ; }
 
