@@ -116,7 +116,7 @@ namespace mongo {
          */
         inline static const void* alignToStartOfPage(const void* ptr) {
             return reinterpret_cast<const void*>(
-                    reinterpret_cast<size_t>(ptr) & ~(getPageSize() - 1));
+                    reinterpret_cast<unsigned long long>(ptr) & ~(getPageSize() - 1));
         }
 
         /**
