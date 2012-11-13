@@ -472,7 +472,7 @@ namespace mongo {
         }
 
         virtual void help(stringstream& h) const {
-            h << "EXPERIMENTAL. "
+            h << "EXPERIMENTAL (UNSUPPORTED). "
               << "Provides detailed and aggregate information and statistics for a btree. "
               << "The entire btree is walked on every call. This command takes a read lock, "
               << "requires the entire btree storage to be paged-in and will be slow on large "
