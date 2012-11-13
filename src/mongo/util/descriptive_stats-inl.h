@@ -40,8 +40,8 @@ namespace mongo {
 
     template <class Sample>
     BasicEstimators<Sample>& BasicEstimators<Sample>::operator <<(const Sample sample) {
-        const double mean = (_count > 0) ? _sum / _count : 0;
-        const double delta = mean - static_cast<double>(sample);
+        const double oldMean = (_count > 0) ? _sum / _count : 0;
+        const double delta = oldMean - static_cast<double>(sample);
         const double weight = static_cast<double>(_count) / (_count + 1);
         _diff += delta * delta * weight;
         _sum += static_cast<double>(sample);
