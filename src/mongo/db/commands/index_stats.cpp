@@ -532,7 +532,7 @@ namespace mongo {
 
     MONGO_INITIALIZER(IndexStatsCmd)(InitializerContext* context) {
         if (cmdLine.experimental.indexStatsCmdEnabled) {
-            // leaked intentionally
+            // Leaked intentionally: a Command registers itself when constructed.
             new IndexStatsCmd();
         }
         return Status::OK();
