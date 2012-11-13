@@ -14,7 +14,7 @@ using namespace std;
 
 namespace {
 
-    const int NumQuantiles = 99;
+    const size_t NumQuantiles = 99;
 
     TEST(DistributionEstimators, TestNominalResults) {
         mongo::DistributionEstimators<NumQuantiles> d;
