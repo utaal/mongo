@@ -1,4 +1,4 @@
-/** @file storage_details.cpp
+/**
  * collection.indexStats({...}) command
  */
 
@@ -23,9 +23,9 @@
 #include <string>
 #include <vector>
 
+#include <boost/noncopyable.hpp>
 #include <boost/optional.hpp>
 
-#include "mongo/base/disallow_copying.h"
 #include "mongo/db/btree.h"
 #include "mongo/db/commands.h"
 #include "mongo/db/db.h"
@@ -42,9 +42,6 @@ namespace mongo {
      * Holds operation parameters.
      */
     struct IndexStatsParams {
-        IndexStatsParams() {
-        }
-
         string indexName;
         vector<int> expandNodes;
     };
@@ -53,6 +50,8 @@ namespace mongo {
      * Holds information about a single btree bucket (not its subtree).
      */
     struct NodeInfo {
+        NodeInfo() : childNum(0), keyCount(0), usedKeyCount(0), depth(0), fillRatio(0) {}
+
         boost::optional<BSONObj> firstKey;
         boost::optional<BSONObj> lastKey;
         BSONObj diskLoc;
@@ -99,13 +98,13 @@ namespace mongo {
         void addStats(int keyCount, int usedKeyCount, const BtreeBucket<Version>* bucket,
                       int keyNodeBytes) {
             this->numBuckets++;
+            this->keyCount << keyCount;
+            this->usedKeyCount << usedKeyCount;
             this->bsonRatio << (static_cast<double>(bucket->getTopSize()) / bucket->bodySize());
             this->keyNodeRatio <<
                     (static_cast<double>(keyNodeBytes * keyCount) / bucket->bodySize());
             this->fillRatio <<
                     (1.0 - static_cast<double>(bucket->getEmptySize()) / bucket->bodySize());
-            this->keyCount << keyCount;
-            this->usedKeyCount << usedKeyCount;
         }
 
         void appendTo(BSONObjBuilder& builder) const {
@@ -122,11 +121,11 @@ namespace mongo {
             }
 
             builder << "numBuckets" << numBuckets
-                    << "keyCount" << statisticSummaryToBSONObj(keyCount)
-                    << "usedKeyCount" << statisticSummaryToBSONObj(usedKeyCount)
-                    << "bsonRatio" << statisticSummaryToBSONObj(bsonRatio)
-                    << "keyNodeRatio" << statisticSummaryToBSONObj(keyNodeRatio)
-                    << "fillRatio" << statisticSummaryToBSONObj(fillRatio);
+                    << "keyCount" << keyCount.statisticSummaryToBSONObj()
+                    << "usedKeyCount" << usedKeyCount.statisticSummaryToBSONObj()
+                    << "bsonRatio" << bsonRatio.statisticSummaryToBSONObj()
+                    << "keyNodeRatio" << keyNodeRatio.statisticSummaryToBSONObj()
+                    << "fillRatio" << fillRatio.statisticSummaryToBSONObj();
         }
     };
 
@@ -159,26 +158,19 @@ namespace mongo {
             builder << "bucketBodyBytes" << bucketBodyBytes;
             builder << "depth" << depth;
 
-            { // ensure done() is called by invoking destructor when done with the builder
-                BSONObjBuilder wholeTreeBuilder(builder.subobjStart("overall"));
-                wholeTree.appendTo(wholeTreeBuilder);
-                wholeTreeBuilder.doneFast(); //TODO(andrea.lattuada) can be removed when SERVER-7459
-                                             //                      is fixed
-            }
+            BSONObjBuilder wholeTreeBuilder(builder.subobjStart("overall"));
+            wholeTree.appendTo(wholeTreeBuilder);
+            wholeTreeBuilder.doneFast();
 
-            { // ensure done() is called by invoking destructor when done with the builder
-                BSONArrayBuilder perLevelArrayBuilder(builder.subarrayStart("perLevel"));
-                for (vector<AreaStats>::const_iterator it = perLevel.begin();
-                     it != perLevel.end();
-                     ++it) {
-                    BSONObjBuilder levelBuilder(perLevelArrayBuilder.subobjStart());
-                    it->appendTo(levelBuilder);
-                    levelBuilder.doneFast(); //TODO(andrea.lattuada) can be removed when SERVER-7459
-                                             //                      is fixed
-                }
-                perLevelArrayBuilder.doneFast(); //TODO(andrea.lattuada) can be removed when
-                                                 //                      SERVER-7459 is fixed
+            BSONArrayBuilder perLevelArrayBuilder(builder.subarrayStart("perLevel"));
+            for (vector<AreaStats>::const_iterator it = perLevel.begin();
+                 it != perLevel.end();
+                 ++it) {
+                BSONObjBuilder levelBuilder(perLevelArrayBuilder.subobjStart());
+                it->appendTo(levelBuilder);
+                levelBuilder.doneFast();
             }
+            perLevelArrayBuilder.doneFast();
 
             if (branch.size() > 1) {
                 BSONArrayBuilder expandedNodesArrayBuilder(builder.subarrayStart("expandedNodes"));
@@ -190,17 +182,13 @@ namespace mongo {
                     for (unsigned int child = 0; child < children.size(); ++child) {
                         BSONObjBuilder childBuilder(childrenArrayBuilder.subobjStart());
                         children[child].appendTo(childBuilder);
-                        childBuilder.doneFast(); //TODO(andrea.lattuada) can be removed when
-                    }                            //                      SERVER-7459 is fixed
+                        childBuilder.doneFast();
+                    }
                 }
-                expandedNodesArrayBuilder.doneFast(); //TODO(andrea.lattuada) can be removed when
-            }                                         //                      SERVER-7459 is fixed
+                expandedNodesArrayBuilder.doneFast();
+            }
         }
     };
-
-    inline double average(unsigned int sum, unsigned int count) {
-        return static_cast<double>(sum) / count;
-    }
 
     /**
      * Performs the btree analysis for a generic btree version. After inspect() is called on the
@@ -208,19 +196,11 @@ namespace mongo {
      *
      * Template-based implementation in BtreeInspectorImpl.
      */
-    class BtreeInspector {
+    class BtreeInspector : boost::noncopyable {
     public:
-        BtreeInspector() {
-        }
-
-        virtual ~BtreeInspector() {
-        }
-
-        virtual bool inspect(DiskLoc& head) = 0;
-
+        virtual ~BtreeInspector() {}
+        virtual bool inspect(const DiskLoc& head) = 0;
         virtual BtreeStats& stats() = 0;
-
-        MONGO_DISALLOW_COPYING(BtreeInspector);
     };
 
     // See BtreeInspector.
@@ -235,7 +215,7 @@ namespace mongo {
         BtreeInspectorImpl(vector<int> expandNodes) : _expandNodes(expandNodes) {
         }
 
-        virtual bool inspect(DiskLoc& head)  {
+        virtual bool inspect(const DiskLoc& head)  {
             _stats.bucketBodyBytes = BucketBasics::bodySize();
             vector<int> expandedAncestors;
             return this->inspectBucket(head, 0, 0, true, expandedAncestors);
@@ -271,8 +251,6 @@ namespace mongo {
             const BtreeBucket<Version>* bucket = dl.btree<Version>();
             int usedKeyCount = 0; // number of used keys in this bucket
 
-            killCurrentOp.checkForInterrupt();
-
             int keyCount = bucket->getN();
             int childrenCount = keyCount + 1; // maximum number of children of this bucket
                                               // including the right child
@@ -298,14 +276,12 @@ namespace mongo {
             for (int i = 0; i < keyCount; i++ ) {
                 const _KeyNode& kn = bucket->k(i);
 
-                if ( kn.isUsed() ) {
+                if (kn.isUsed()) {
                     ++usedKeyCount;
                     if (i == 0) {
                         firstKeyNode = &kn;
                     }
-                    else if (i == keyCount - 1) {
-                        lastKeyNode = &kn;
-                    }
+                    lastKeyNode = &kn;
 
                     this->inspectBucket(kn.prevChildBucket, depth + 1, i, curNodeIsExpanded,
                                         expandedAncestors);
@@ -377,41 +353,38 @@ namespace mongo {
     bool runInternal(const NamespaceDetails* nsd, IndexStatsParams params, string& errmsg,
                      BSONObjBuilder& result) {
 
-        IndexDetails* detailsPtr = NULL;
+        const IndexDetails* details = NULL;
 
         // casting away const, we are not going to modify NamespaceDetails
-        // but ii() is not marked const
+        // but ii() is not marked const, see SERVER-7619
         for (NamespaceDetails::IndexIterator it = const_cast<NamespaceDetails*>(nsd)->ii();
              it.more();) {
             IndexDetails& cur = it.next();
-            if (cur.indexName() == params.indexName) detailsPtr = &cur;
+            if (cur.indexName() == params.indexName) details = &cur;
         }
 
-        if (detailsPtr == NULL) {
+        if (details == NULL) {
             errmsg = "the requested index does not exist";
             return false;
         }
 
-        IndexDetails& details = *detailsPtr;
-        result << "index" << details.indexName()
-               << "version" << details.version()
-               << "isIdIndex" << details.isIdIndex()
-               << "keyPattern" << details.keyPattern()
-               << "storageNs" << details.indexNamespace();
+        result << "index" << details->indexName()
+               << "version" << details->version()
+               << "isIdIndex" << details->isIdIndex()
+               << "keyPattern" << details->keyPattern()
+               << "storageNs" << details->indexNamespace();
 
         scoped_ptr<BtreeInspector> inspector(NULL);
-        switch (details.version()) {
-          case 1:
-            inspector.reset(new BtreeInspectorV1(params.expandNodes)); break;
-          case 0:
-            inspector.reset(new BtreeInspectorV0(params.expandNodes)); break;
+        switch (details->version()) {
+          case 1: inspector.reset(new BtreeInspectorV1(params.expandNodes)); break;
+          case 0: inspector.reset(new BtreeInspectorV0(params.expandNodes)); break;
           default:
-            errmsg = str::stream() << "index version " << details.version() << " is "
+            errmsg = str::stream() << "index version " << details->version() << " is "
                                    << "not supported";
             return false;
         }
 
-        inspector->inspect(details.head);
+        inspector->inspect(details->head);
 
         inspector->stats().appendTo(result);
 
@@ -501,8 +474,8 @@ namespace mongo {
             h << "Provides detailed and aggregate information and statistics for a btree. "
               << "The entire btree is walked on every call. This command takes a read lock, "
               << "requires the entire btree storage to be paged-in and will be slow on large "
-              << "indexes.";
-        }
+              << "indexes. Requires an index name in {index: '_name'} and optionally an array "
+              << "of the nodes to be expanded, such as {expandNodes: [0, 3]}.";
 
         virtual LockType locktype() const { return READ; }
 
@@ -510,7 +483,7 @@ namespace mongo {
                  BSONObjBuilder& result, bool fromRepl) {
 
             string ns = dbname + "." + cmdObj.firstElement().valuestrsafe();
-            NamespaceDetails* nsd = nsdetails(ns.c_str());
+            const NamespaceDetails* nsd = nsdetails(ns.c_str());
             if (!cmdLine.quiet) {
                 tlog() << "CMD: indexStats " << ns << endl;
             }
@@ -545,15 +518,9 @@ namespace mongo {
                 }
             }
 
-            bool success = false;
             BSONObjBuilder resultBuilder;
-            try {
-                success = runInternal(nsd, params, errmsg, resultBuilder);
-            } catch (DBException& e) {
-                errmsg = str::stream() << "unexpected error: code " << e.getCode();
+            if (!runInternal(nsd, params, errmsg, resultBuilder))
                 return false;
-            }
-            if (!success) return false;
             result.appendElements(resultBuilder.obj());
             return true;
         }

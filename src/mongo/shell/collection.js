@@ -65,7 +65,7 @@ DBCollection.prototype.help = function () {
     print("\tdb." + shortName + ".totalSize() - storage allocated for all data and indexes");
     print("\tdb." + shortName + ".update(query, object[, upsert_bool, multi_bool]) - instead of two flags, you can pass an object with fields: upsert, multi");
     print("\tdb." + shortName + ".validate( <full> ) - SLOW");;
-    print("\tdb." + shortName + ".getIndexStats({expandNodes: [<expanded child numbers>}, <detailed: t/f>) - prints aggregate/per-depth btree bucket stats");
+    print("\tdb." + shortName + ".getIndexStats({expandNodes: [<expanded child numbers>}, <detailed: t/f>) - same as .indexStats but prints a human readable summary of the output");
     print("\tdb." + shortName + ".getShardVersion() - only for use with sharding");
     print("\tdb." + shortName + ".getShardDistribution() - prints statistics about data distribution in the cluster");
     print("\tdb." + shortName + ".getSplitKeysForChunks( <maxChunkSize> ) - calculates split points over all chunks and returns splitter function");
@@ -452,7 +452,7 @@ DBCollection.prototype.indexStats = function(params) {
 DBCollection.prototype.getIndexStats = function(params, detailed) {
     var stats = this.indexStats(params);
     if (!stats.ok) {
-        print("error executing indexStats command: " + stats.errmsg);
+        print("error executing indexStats command: " + tojson(stats));
         return;
     }
 
