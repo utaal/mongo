@@ -25,13 +25,13 @@ namespace {
         ASSERT_TRUE(d.quantilesReady());
         for (size_t quant = 1; quant <= NumQuantiles; ++quant) {
             ASSERT_EQUALS(d.probability(quant), double(quant) / 100);
-            ASSERT_CLOSE(d.quantile(quant), double(quant) / 100, 0.05);
+            ASSERT_APPROX_EQUAL(d.quantile(quant), double(quant) / 100, 0.05);
             double prob = double(quant) / 100;
-            ASSERT_CLOSE(d.icdf(prob), prob, 0.05);
+            ASSERT_APPROX_EQUAL(d.icdf(prob), prob, 0.05);
         }
-        ASSERT_CLOSE(d.min(), 0.0, 0.05);
-        ASSERT_CLOSE(d.max(), 1.0, 0.05);
-        ASSERT_CLOSE(d.median(), 0.5, 0.05);
+        ASSERT_APPROX_EQUAL(d.min(), 0.0, 0.05);
+        ASSERT_APPROX_EQUAL(d.max(), 1.0, 0.05);
+        ASSERT_APPROX_EQUAL(d.median(), 0.5, 0.05);
     }
 
     TEST(DistributionEstimators, TestAppendQuantilesToBSONArrayBuilder) {
@@ -61,8 +61,8 @@ namespace {
         }
         ASSERT_EQUALS(d.min(), 50u);
         ASSERT_EQUALS(d.max(), 100000u - 50u);
-        ASSERT_CLOSE(d.mean(), 100000 / 2, 1e-15);
-        ASSERT_CLOSE(d.stddev(), sqrt((static_cast<double>(count) * count - 1) / 12), 1e-15);
+        ASSERT_APPROX_EQUAL(d.mean(), 100000 / 2, 1e-15);
+        ASSERT_APPROX_EQUAL(d.stddev(), sqrt((static_cast<double>(count) * count - 1) / 12), 1e-15);
     }
 
     TEST(BasicEstimators, TestAppendBasicToBSONObjBuilder) {
@@ -91,12 +91,12 @@ namespace {
         }
         ASSERT_TRUE(d.quantilesReady());
         for (size_t i = 0; i < d.numberOfQuantiles; i++) {
-            ASSERT_CLOSE(d.quantile(i), -200 + static_cast<int>(i) * 4, 1);
+            ASSERT_APPROX_EQUAL(d.quantile(i), -200 + static_cast<int>(i) * 4, 1);
         }
         ASSERT_EQUALS(d.min(), -200);
         ASSERT_EQUALS(d.max(), 200);
-        ASSERT_CLOSE(d.mean(), 0, 1e-15);
-        ASSERT_CLOSE(d.icdf(.25), -100, 1e-15);
+        ASSERT_APPROX_EQUAL(d.mean(), 0, 1e-15);
+        ASSERT_APPROX_EQUAL(d.icdf(.25), -100, 1e-15);
     }
 
     TEST(SummaryEstimators, TestStatisticSummaryToBSONObj) {
