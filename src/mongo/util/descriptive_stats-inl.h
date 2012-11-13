@@ -24,13 +24,15 @@
 #include <algorithm>
 #include <limits>
 
+#include "mongo/util/mongoutils/str.h"
+
 namespace mongo {
 
     template <class Sample>
     BasicEstimators<Sample>::BasicEstimators() :
             _count(0),
-            _mean(0),
-            _M2(0),
+            _sum(0),
+            _diff(0),
             _min(std::numeric_limits<Sample>::max()),
             _max(std::numeric_limits<Sample>::min()) {
 
@@ -38,17 +40,24 @@ namespace mongo {
 
     template <class Sample>
     BasicEstimators<Sample>& BasicEstimators<Sample>::operator <<(const Sample sample) {
+        const double mean = (_count > 0) ? _sum / _count : 0;
+        const double delta = mean - static_cast<double>(sample);
+        const double weight = static_cast<double>(_count) / (_count + 1);
+        _diff += delta * delta * weight;
+        _sum += static_cast<double>(sample);
+        _count++;
         _min = std::min(sample, _min);
         _max = std::max(sample, _max);
-
-        // Online estimation of mean and variance using Knuth's algorithm
-        // See http://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Online_algorithm
-        _count++;
-        const double delta = static_cast<double>(sample) - _mean;
-        _mean += delta / _count;
-        _M2 += delta * (static_cast<double>(sample) - _mean);
-
         return *this;
+    }
+
+    template <class Sample>
+    void BasicEstimators<Sample>::appendBasicToBSONObjBuilder(BSONObjBuilder& b) {
+        b << "count" << static_cast<long long>(count())
+          << "mean" << mean()
+          << "stddev" << stddev()
+          << "min" << min()
+          << "max" << max();
     }
 
     template <std::size_t NumQuantiles>
@@ -165,8 +174,40 @@ namespace mongo {
     }
 
     template <std::size_t NumQuantiles>
+    void DistributionEstimators<NumQuantiles>::appendQuantilesToBSONArrayBuilder(
+            BSONArrayBuilder& arr) {
+
+        verify(quantilesReady());
+        for (std::size_t i = 0; i <= NumQuantiles + 1; i++) {
+            arr << quantile(i);
+        }
+    }
+
+    template <std::size_t NumQuantiles>
     inline double DistributionEstimators<NumQuantiles>::_positions_increments(std::size_t i) const {
         return static_cast<double>(i) / (2 * (NumQuantiles + 1));
+    }
+
+    template <class Sample, std::size_t NumQuantiles>
+    BSONObj SummaryEstimators<Sample, NumQuantiles>::statisticSummaryToBSONObj() {
+        BSONObjBuilder b;
+        this->BasicEstimators<Sample>::appendBasicToBSONObjBuilder(b);
+        if (this->DistributionEstimators<NumQuantiles>::quantilesReady()) {
+            // Not using appendQuantiles to be explicit about which probability each quantile
+            // refers to. This way the user does not need to count the quantiles or know in
+            // advance how many quantiles were computed to figure out their meaning.
+            BSONObjBuilder quantilesBuilder(b.subobjStart("quantiles"));
+            for (size_t i = 1; i <= NumQuantiles; i++) {
+                const double probability =
+                        this->DistributionEstimators<NumQuantiles>::probability(i);
+                const double quantile =
+                        this->DistributionEstimators<NumQuantiles>::quantile(i);
+                quantilesBuilder.append(std::string(mongoutils::str::stream() << probability),
+                                        quantile);
+            }
+            quantilesBuilder.doneFast();
+        }
+        return b.obj();
     }
 
 } // namespace mongo

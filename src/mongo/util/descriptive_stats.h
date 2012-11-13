@@ -17,6 +17,7 @@
 
 #include <cmath>
 
+#include "mongo/db/jsobj.h"
 #include "mongo/util/assert_util.h"
 
 /**
@@ -63,13 +64,13 @@ namespace mongo {
          * @return mean of the observations seen so far
          * NOTE: exact (within the limits of IEEE floating point precision).
          */
-        inline double mean() const { return _mean; }
+        inline double mean() const { return _sum / _count; }
 
         /**
          * @return standard deviation of the observations so far
-         * NOTE: estimation.
+         * NOTE: exact (within the limits of IEEE floating point precision).
          */
-        inline double stddev() const { return std::sqrt(_M2 / (_count - 1)); }
+        inline double stddev() const { return std::sqrt(_diff / _count); }
 
         /**
          * @return minimum observed value so far
@@ -83,10 +84,15 @@ namespace mongo {
          */
         inline Sample max() const { return _max; }
 
+        /**
+         * Appends the basic estimators to the provided BSONObjBuilder.
+         */
+        void appendBasicToBSONObjBuilder(BSONObjBuilder& b);
+
     private:
         size_t _count;
-        double _mean;
-        double _M2; // sum of squares of differences from the (current) mean
+        double _sum;
+        double _diff; // sum of squares of differences from the (then-current) mean
         Sample _min;
         Sample _max;
     };
@@ -107,6 +113,11 @@ namespace mongo {
         DistributionEstimators();
 
         DistributionEstimators& operator <<(const double sample);
+
+        /**
+         * Number of computed quantiles, excluding minimum and maximum.
+         */
+        static const size_t numberOfQuantiles = NumQuantiles;
 
         /**
          * Updates the estimators with another observed value.
@@ -164,6 +175,12 @@ namespace mongo {
             return quantile(quant);
         }
 
+        /**
+         * Appends the quantiles to the provided BSONArrayBuilder.
+         * REQUIRES e.quantilesReady() == true
+         */
+        void appendQuantilesToBSONArrayBuilder(BSONArrayBuilder& arr);
+
     private:
         inline double _positions_increments(std::size_t i) const;
 
@@ -198,6 +215,11 @@ namespace mongo {
         inline Sample max() const {
             return this->BasicEstimators<Sample>::max();
         }
+
+        /**
+         * @return a summary of the computed estimators as a BSONObj.
+         */
+        BSONObj statisticSummaryToBSONObj();
     };
 
 } // namespace mongo
