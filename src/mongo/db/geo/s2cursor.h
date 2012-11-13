@@ -17,7 +17,6 @@
 #include <vector>
 #include "mongo/db/jsobj.h"
 #include "mongo/db/commands.h"
-#include "mongo/db/btree.h"
 #include "mongo/db/cursor.h"
 #include "mongo/db/diskloc.h"
 #include "mongo/db/matcher.h"
@@ -25,6 +24,8 @@
 #include "mongo/db/geo/s2common.h"
 
 namespace mongo {
+    class BtreeCursor;
+
     class S2Cursor : public Cursor {
     public:
         S2Cursor(const BSONObj &keyPattern, const IndexDetails* details, const BSONObj &query,
@@ -56,7 +57,7 @@ namespace mongo {
         // Make an object that describes the restrictions on all possible valid keys.
         // It's kind of a monstrous object.  Thanks, FieldRangeSet, for doing all the work
         // for us.
-        BSONObj makeUnifiedFRS();
+        BSONObj makeFRSObject();
 
         // Need this to make a FieldRangeSet.
         const IndexDetails *_details;

@@ -20,7 +20,7 @@
 #include "mongo/db/auth/authorization_manager.h"
 
 #include "mongo/base/status.h"
-#include "mongo/db/auth/external_state_mock.h"
+#include "mongo/db/auth/auth_external_state_mock.h"
 #include "mongo/db/jsobj.h"
 #include "mongo/unittest/unittest.h"
 
@@ -36,8 +36,9 @@ namespace {
         actions.addAction(ActionType::insert);
         AcquiredPrivilege writePrivilege(Privilege("test", actions), principal);
         AcquiredPrivilege allDBsWritePrivilege(Privilege("*", actions), principal);
-        ExternalStateMock* externalState = new ExternalStateMock();
+        AuthExternalStateMock* externalState = new AuthExternalStateMock();
         AuthorizationManager authManager(externalState);
+        authManager.initialize(NULL);
 
         ASSERT_NULL(authManager.checkAuthorization("test", ActionType::insert));
         externalState->setReturnValueForShouldIgnoreAuthChecks(true);
@@ -58,8 +59,9 @@ namespace {
     }
 
     TEST(AuthorizationManagerTest, GrantInternalAuthorization) {
-        ExternalStateMock* externalState = new ExternalStateMock();
+        AuthExternalStateMock* externalState = new AuthExternalStateMock();
         AuthorizationManager authManager(externalState);
+        authManager.initialize(NULL);
 
         ASSERT_NULL(authManager.checkAuthorization("test", ActionType::insert));
         ASSERT_NULL(authManager.checkAuthorization("test", ActionType::replSetHeartbeat));
