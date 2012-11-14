@@ -34,8 +34,6 @@ namespace mongo {
 
 namespace {
 
-    static size_t PAGE_BYTES = 4 << 10;
-
     // Helper classes and functions
 
     /**
@@ -98,7 +96,7 @@ namespace {
             verify(freeRecords.size() == rhs.freeRecords.size());
             vector<double>::const_iterator rhsit = rhs.freeRecords.begin();
             for (vector<double>::iterator thisit = this->freeRecords.begin();
-                     thisit != this->freeRecords.end(); thisit++, rhsit++) {
+                     thisit != this->freeRecords.end(); ++thisit, ++rhsit) {
                 *thisit += *rhsit;
             }
             return *this;
@@ -193,9 +191,9 @@ namespace {
             if (res.sizeInLastChunk < 0) {
                 res.sizeInLastChunk = 0;
             }
-            res.inFirstChunkRatio = (double) res.sizeInFirstChunk / recLen;
-            res.inMiddleChunkRatio = (double) res.sizeInMiddleChunk / recLen;
-            res.inLastChunkRatio = (double) res.sizeInLastChunk / recLen;
+            res.inFirstChunkRatio = static_cast<double>(res.sizeInFirstChunk) / recLen;
+            res.inMiddleChunkRatio = static_cast<double>(res.sizeInMiddleChunk) / recLen;
+            res.inLastChunkRatio = static_cast<double>(res.sizeInLastChunk) / recLen;
             return res;
         }
 
@@ -292,9 +290,21 @@ namespace {
         }
 
         virtual void help(stringstream& h) const {
-            h << "Provides detailed and aggregate information regarding record and deleted record "
-              << "layout in storage files and in memory. Slow if run on large collections. "
-              << "Specify {extent: num_} to restrict processing to a single extent.";
+            h << "EXPERIMENTAL (UNSUPPORTED). "
+              << "Provides detailed and aggregate information regarding record and deleted record "
+              << "layout in storage files ({analyze: 'diskStorage'}) and percentage of pages "
+              << "currently in RAM ({analyze: 'pagesInRAM'}). Slow if run on large collections. "
+              << "Select the desired subcommand with {analyze: 'diskStorage' | 'pagesInRAM'}; "
+              << "specify {extent: num_} and, optionally, {range: [start, end]} to restrict "
+              << "processing to a single extent (start and end are offsets from the beginning of "
+              << "the extent. {granularity: bytes} or {numberOfChunks: num_} enable aggregation of "
+              << "statistic per-chunk: the extent(s) will either be subdivided in about "
+              << "'numberOfChunks' chunks or in chunks of size 'granularity'. "
+              << "{characteristicField: dotted_path} enables collection of a field to make "
+              << "it possible to identify which kind of record belong to each chunk/extent. "
+              << "{showRecords: true} enables a dump of all records and deleted records "
+              << "encountered. Example: "
+              << "{storageDetails: 'collectionName', analyze: 'diskStorage', granularity: 1 << 20}";
         }
 
         virtual LockType locktype() const { return READ; }
@@ -322,7 +332,7 @@ namespace {
         }
         bool hasValue = false;
         if (elem.type() == jstOID) {
-            value = double(elem.OID().asTimeT());
+            value = static_cast<double>(elem.OID().asTimeT());
             hasValue = true;
         }
         else if (elem.isNumber()) {
@@ -330,7 +340,7 @@ namespace {
             hasValue = true;
         }
         else if (elem.type() == mongo::Date) {
-            value = double(elem.date().toTimeT());
+            value = static_cast<double>(elem.date().toTimeT());
             hasValue = true;
         }
         return hasValue;
@@ -434,8 +444,7 @@ namespace {
             if (hasCharacteristicField) {
                 recordBuilder.append("characteristic", characteristicFieldValue);
             }
-            recordBuilder.doneFast(); //TODO(andrea.lattuada) can be removed when SERVER-7459
-                                      //                      is fixed
+            recordBuilder.doneFast();
         }
     }
 
@@ -512,49 +521,43 @@ namespace {
         Record* r;
         int extentOfs = ex->myLoc.getOfs();
 
-        { // ensure done() is called by invoking destructor when done with the builder
-            scoped_ptr<BSONArrayBuilder> recordsArrayBuilder;
-            if (params.showRecords) {
-                recordsArrayBuilder.reset(new BSONArrayBuilder(result.subarrayStart("records")));
-            }
+        scoped_ptr<BSONArrayBuilder> recordsArrayBuilder;
+        if (params.showRecords) {
+            recordsArrayBuilder.reset(new BSONArrayBuilder(result.subarrayStart("records")));
+        }
 
-            DiskLoc prevDl = ex->firstRecord;
-            for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) {
-                r = dl.rec();
-                processRecord(dl, prevDl, r, extentOfs, params, chunkData,
-                              recordsArrayBuilder.get());
-                prevDl = dl;
-            }
-            if (recordsArrayBuilder.get() != NULL) {
-                recordsArrayBuilder->doneFast(); //TODO(andrea.lattuada) can be removed when
-                                                 //                      SERVER-7459 is fixed
-            }
+        DiskLoc prevDl = ex->firstRecord;
+        for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) {
+            r = dl.rec();
+            processRecord(dl, prevDl, r, extentOfs, params, chunkData,
+                          recordsArrayBuilder.get());
+            prevDl = dl;
+        }
+        if (recordsArrayBuilder.get() != NULL) {
+            recordsArrayBuilder->doneFast();
         }
 
         bool processingDeletedRecords = !isCapped && params.processDeletedRecords;
 
-        { // ensure done() is called by invoking destructor when done with the builder
-            scoped_ptr<BSONArrayBuilder> deletedRecordsArrayBuilder;
-            if (params.showRecords) {
-                deletedRecordsArrayBuilder.reset(
-                        new BSONArrayBuilder(result.subarrayStart("deletedRecords")));
-            }
+        scoped_ptr<BSONArrayBuilder> deletedRecordsArrayBuilder;
+        if (params.showRecords) {
+            deletedRecordsArrayBuilder.reset(
+                    new BSONArrayBuilder(result.subarrayStart("deletedRecords")));
+        }
 
-            if (processingDeletedRecords) {
-                for (int bucketNum = 0; bucketNum < mongo::Buckets; bucketNum++) {
-                    DiskLoc dl = nsd->deletedList[bucketNum];
-                    while (!dl.isNull()) {
-                        DeletedRecord* dr = dl.drec();
-                        processDeletedRecord(dl, dr, ex, params, bucketNum, chunkData,
-                                             deletedRecordsArrayBuilder.get());
-                        dl = dr->nextDeleted();
-                    }
+        if (processingDeletedRecords) {
+            for (int bucketNum = 0; bucketNum < mongo::Buckets; bucketNum++) {
+                DiskLoc dl = nsd->deletedList[bucketNum];
+                while (!dl.isNull()) {
+                    DeletedRecord* dr = dl.drec();
+                    processDeletedRecord(dl, dr, ex, params, bucketNum, chunkData,
+                                         deletedRecordsArrayBuilder.get());
+                    dl = dr->nextDeleted();
                 }
             }
-            if (deletedRecordsArrayBuilder.get() != NULL) {
-                deletedRecordsArrayBuilder->doneFast(); //TODO(andrea.lattuada) can be removed when
-                                                        //                      SERVER-7459 is fixed
-            }
+        }
+        if (deletedRecordsArrayBuilder.get() != NULL) {
+            deletedRecordsArrayBuilder->doneFast();
         }
 
         DiskStorageData extentData(0);
@@ -569,8 +572,7 @@ namespace {
                 it->appendToBSONObjBuilder(chunkBuilder, processingDeletedRecords);
                 chunkArrayBuilder.append(chunkBuilder.obj());
             }
-            chunkArrayBuilder.doneFast(); //TODO(andrea.lattuada) can be removed when
-                                          //                      SERVER-7459 is fixed
+            chunkArrayBuilder.doneFast();
             extentData.appendToBSONObjBuilder(result, processingDeletedRecords);
         } else {
             chunkData[0].appendToBSONObjBuilder(result, processingDeletedRecords);
@@ -599,52 +601,52 @@ namespace {
                            BSONObjBuilder& result) {
 
         verify(sizeof(char) == 1);
-        result.append("pageBytes", int(PAGE_BYTES));
+        int pageBytes = static_cast<int>(ProcessInfo::getPageSize());
+        result.append("pageBytes", pageBytes);
         result.append("onDiskBytes", ex->length - Extent::HeaderSize());
         char* startAddr = (char*) ex + params.startOfs;
 
-        int extentPages = ceilingDiv(params.endOfs - params.startOfs, int(PAGE_BYTES));
+        int extentPages = ceilingDiv(params.endOfs - params.startOfs, pageBytes);
         int extentInMemCount = 0; // number of pages in memory for the entire extent
-        { // ensure done() is called by invoking destructor when done with the builder
-            scoped_ptr<BSONArrayBuilder> arr;
-            int chunkBytes = params.granularity;
 
-            if (params.numberOfChunks > 1) {
-                result.append("chunkBytes", chunkBytes);
-                arr.reset(new BSONArrayBuilder(result.subarrayStart("chunks")));
-            }
+        scoped_ptr<BSONArrayBuilder> arr;
+        int chunkBytes = params.granularity;
 
-            for (int chunk = 0; chunk < params.numberOfChunks; ++chunk) {
-                if (chunk == params.numberOfChunks - 1) {
-                    chunkBytes = params.lastChunkLength;
-                }
-                int pagesInChunk = ceilingDiv(chunkBytes, PAGE_BYTES);
-
-                const char* firstPageAddr = startAddr + (chunk * params.granularity);
-                vector<char> isInMem;
-                if (! ProcessInfo::pagesInMemory(firstPageAddr, pagesInChunk, &isInMem)) {
-                    errmsg = "system call failed";
-                    return false;
-                }
-
-                int inMemCount = 0;
-                for (int page = 0; page < pagesInChunk; ++page) {
-                    if (isInMem[page]) {
-                        inMemCount++;
-                        extentInMemCount++;
-                    }
-                }
-
-                if (arr.get() != NULL) {
-                    arr->append(double(inMemCount) / pagesInChunk);
-                }
-            }
-            if (arr.get() != NULL) {
-                arr->doneFast(); //TODO(andrea.lattuada) can be removed when SERVER-7459 is fixed
-            }
+        if (params.numberOfChunks > 1) {
+            result.append("chunkBytes", chunkBytes);
+            arr.reset(new BSONArrayBuilder(result.subarrayStart("chunks")));
         }
 
-        result.append("inMem", double(extentInMemCount) / extentPages);
+        for (int chunk = 0; chunk < params.numberOfChunks; chunk++) {
+            if (chunk == params.numberOfChunks - 1) {
+                chunkBytes = params.lastChunkLength;
+            }
+            int pagesInChunk = ceilingDiv(chunkBytes, pageBytes);
+
+            const char* firstPageAddr = startAddr + (chunk * params.granularity);
+            vector<char> isInMem;
+            if (! ProcessInfo::pagesInMemory(firstPageAddr, pagesInChunk, &isInMem)) {
+                errmsg = "system call failed";
+                return false;
+            }
+
+            int inMemCount = 0;
+            for (int page = 0; page < pagesInChunk; page++) {
+                if (isInMem[page]) {
+                    inMemCount++;
+                    extentInMemCount++;
+                }
+            }
+
+            if (arr.get() != NULL) {
+                arr->append(static_cast<double>(inMemCount) / pagesInChunk);
+            }
+        }
+        if (arr.get() != NULL) {
+            arr->doneFast();
+        }
+
+        result.append("inMem", static_cast<double>(extentInMemCount) / extentPages);
 
         return true;
     }
@@ -712,26 +714,23 @@ namespace {
                 PRINT(globalParams.granularity);
             }
 
-            { // ensure done() is called by invoking destructor when done with the builder
-                BSONArrayBuilder extentsArrayBuilder(outputBuilder.subarrayStart("extents"));
-                for (Extent* curExtent = dl.ext();
-                     curExtent != NULL;
-                     curExtent = curExtent->getNextExtent()) {
+            BSONArrayBuilder extentsArrayBuilder(outputBuilder.subarrayStart("extents"));
+            for (Extent* curExtent = dl.ext();
+                 curExtent != NULL;
+                 curExtent = curExtent->getNextExtent()) {
 
-                    AnalyzeParams extentParams(globalParams);
-                    extentParams.numberOfChunks = 0; // use the specified or calculated granularity;
-                                                     // globalParams.numberOfChunks refers to the
-                                                     // total number of chunks across all the
-                                                     // extents
-                    {
-                        BSONObjBuilder extentBuilder(extentsArrayBuilder.subobjStart());
-                        success = analyzeExtent(nsd, curExtent, subCommand, extentParams, errmsg,
-                                                extentBuilder);
-                    }
+                AnalyzeParams extentParams(globalParams);
+                extentParams.numberOfChunks = 0; // use the specified or calculated granularity;
+                                                 // globalParams.numberOfChunks refers to the
+                                                 // total number of chunks across all the
+                                                 // extents
+                {
+                    BSONObjBuilder extentBuilder(extentsArrayBuilder.subobjStart());
+                    success = analyzeExtent(nsd, curExtent, subCommand, extentParams, errmsg,
+                                            extentBuilder);
                 }
-                extentsArrayBuilder.doneFast(); //TODO(andrea.lattuada) can be removed when
-                                                //                      SERVER-7459 is fixed
             }
+            extentsArrayBuilder.doneFast();
         }
         if (!success) return false;
         result.appendElements(outputBuilder.obj());
