@@ -22,6 +22,8 @@
 #include <cstdlib>
 #include <iostream>
 #include <fstream>
+#include <stdio.h>
+#include <string.h>
 
 #ifndef _WIN32
 #include <errno.h>
@@ -46,6 +48,15 @@ namespace mongo {
         return rand_r( &_seed );
     }
 #endif
+    PseudoRandom::PseudoRandom( int64_t seed ) {
+        _seed = static_cast<uint32_t>( seed );
+    }
+
+    int64_t PseudoRandom::nextInt64() {
+        int64_t a = nextInt32();
+        int64_t b = nextInt32();
+        return ( a << 32 ) | b;
+    }
 
     // --- SecureRandom ----
 
