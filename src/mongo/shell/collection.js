@@ -534,24 +534,24 @@ DBCollection.prototype.getPagesInRAM = function(params) {
         print();
         if (ex.chunks) {
             print("\tchunks, percentage of pages in memory (< .1% : ' ', <25% : '.', " +
-                  "<50% : '_', <75% : '|', >75% : '#')");
+                  "<50% : '_', <75% : '=', >75% : '#')");
             print();
-            print("\t" + "offset".pad(8) + "  |chunks...| (each chunk is " +
+            print("\t" + "offset".pad(8) + "  [chunks...] (each chunk is " +
                   sh._dataFormat(ex.chunkBytes) + ")");
-            line = "\t" + ("" + 0).pad(8) + "  |";
+            line = "\t" + ("" + 0).pad(8) + "  [";
             for (var c = 0; c < ex.chunks.length; c++) {
                 if (c % 80 == 0 && c != 0) {
-                    print(line + "|");
-                    line = "\t" + sh._dataFormat(ex.chunkBytes * c).pad(8) + "  |";
+                    print(line + "]");
+                    line = "\t" + sh._dataFormat(ex.chunkBytes * c).pad(8) + "  [";
                 }
                 var inMem = ex.chunks[c];
                 if (inMem <= .001) line += " ";
                 else if (inMem <= .25) line += ".";
-                else if (inMem <= .5) line += "*";
-                else if (inMem <= .75) line += "%";
+                else if (inMem <= .5) line += "_";
+                else if (inMem <= .75) line += "=";
                 else line += "#";
             }
-            print(line + "|");
+            print(line + "]");
             print();
         }
     }
