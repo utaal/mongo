@@ -69,8 +69,8 @@ DBCollection.prototype.help = function () {
     print("\tdb." + shortName + ".getShardVersion() - only for use with sharding");
     print("\tdb." + shortName + ".getShardDistribution() - prints statistics about data distribution in the cluster");
     print("\tdb." + shortName + ".getSplitKeysForChunks( <maxChunkSize> ) - calculates split points over all chunks and returns splitter function");
-    print("\tdb." + shortName + ".getDiskStorageStats({...}) - prints a summary of disk usage statistics");
-    print("\tdb." + shortName + ".getPagesInRAM({...}) - prints a summary of storage pages currently in physical memory");
+    // print("\tdb." + shortName + ".getDiskStorageStats({...}) - prints a summary of disk usage statistics");
+    // print("\tdb." + shortName + ".getPagesInRAM({...}) - prints a summary of storage pages currently in physical memory");
     return __magicNoPrint;
 }
 
@@ -450,29 +450,25 @@ DBCollection.prototype.getDiskStorageStats = function(params) {
         return;
     }
 
-    print("\n    " + sh._padStr("size", 9) + " " + sh._padStr("# recs", 10) + " " +
+    print("\n    " + "size".pad(9) + " " + "# recs".pad(10) + " " +
           "[===occupied by BSON=== ---occupied by padding---       free           ]" + "  " +
-          sh._padStr("bson", 8) + " " + sh._padStr("rec", 8) + " " + sh._padStr("padding", 8));
+          "bson".pad(8) + " " + "rec".pad(8) + " " + "padding".pad(8));
     print();
-
-    var percent = function(val) {
-        return (val * 100).toFixed(2) + "%";
-    };
 
     var BAR_WIDTH = 70;
 
     var formatChunkData = function(data) {
-        var bar = sh._barFormat([
+        var bar = _barFormat([
             [data.bsonBytes / data.onDiskBytes, "="],
             [(data.recBytes - data.bsonBytes) / data.onDiskBytes, "-"]
         ], BAR_WIDTH);
 
-        return sh._padStr(sh._dataFormat(data.onDiskBytes), 9) + " " +
-               sh._padStr(data.numEntries.toFixed(0), 10) + " " +
+        return sh._dataFormat(data.onDiskBytes).pad(9) + " " +
+               data.numEntries.toFixed(0).pad(10) + " " +
                bar + "  " +
-               sh._padStr(percent(data.bsonBytes / data.onDiskBytes), 8) + " " +
-               sh._padStr(percent(data.recBytes / data.onDiskBytes), 8) + " " +
-               sh._padStr((data.recBytes / data.bsonBytes).toFixed(4), 8);
+               (data.bsonBytes / data.onDiskBytes).toPercentStr().pad(8) + " " +
+               (data.recBytes / data.onDiskBytes).toPercentStr().pad(8) + " " +
+               (data.recBytes / data.bsonBytes).toFixed(4).pad(8);
     };
 
     var printExtent = function(ex, rng) {
@@ -480,9 +476,9 @@ DBCollection.prototype.getDiskStorageStats = function(params) {
         print("tot " + formatChunkData(ex));
         print();
         if (ex.chunks) {
-            for (var c = 0; c < ex.chunks.length; ++c) {
+            for (var c = 0; c < ex.chunks.length; c++) {
                 var chunk = ex.chunks[c];
-                print(sh._padStr("" + c, 3) + " " + formatChunkData(chunk));
+                print(("" + c).pad(3) + " " + formatChunkData(chunk));
             }
             print();
         }
@@ -490,13 +486,13 @@ DBCollection.prototype.getDiskStorageStats = function(params) {
 
     if (stats.extents) {
         print("--- extent overview ---\n");
-        for (var i = 0; i < stats.extents.length; ++i) {
+        for (var i = 0; i < stats.extents.length; i++) {
             var ex = stats.extents[i];
-            print(sh._padStr("" + i, 3) + " " + formatChunkData(ex));
+            print(("" + i).pad(3) + " " + formatChunkData(ex));
         }
         print();
         if (params && (params.granularity || params.numberOfChunks)) {
-            for (var i = 0; i < stats.extents.length; ++i) {
+            for (var i = 0; i < stats.extents.length; i++) {
                 printExtent(stats.extents[i], i);
             }
         }
@@ -527,9 +523,9 @@ DBCollection.prototype.getPagesInRAM = function(params) {
 
     var BAR_WIDTH = 70;
     var formatExtentData = function(data) {
-        return sh._padStr("size", 8) + " " +
-               sh._barFormat([ [data.inMem, '='] ], BAR_WIDTH) + "  " +
-               sh._padStr(data.inMem.toFixed(3), 7);
+        return "size".pad(8) + " " +
+               _barFormat([ [data.inMem, '='] ], BAR_WIDTH) + "  " +
+               data.inMem.toPercentStr().pad(7);
     }
 
     var printExtent = function(ex, rng) {
@@ -538,15 +534,15 @@ DBCollection.prototype.getPagesInRAM = function(params) {
         print();
         if (ex.chunks) {
             print("\tchunks, percentage of pages in memory (< .1% : ' ', <25% : '.', " +
-                  "<50% : '*', <75% : '%', >75% : '#')");
+                  "<50% : '_', <75% : '|', >75% : '#')");
             print();
-            print("\t" + sh._padStr("offset", 8) + "  |chunks...| (each chunk is " +
+            print("\t" + "offset".pad(8) + "  |chunks...| (each chunk is " +
                   sh._dataFormat(ex.chunkBytes) + ")");
-            line = "\t" + sh._padStr("" + 0, 8) + "  |";
-            for (var c = 0; c < ex.chunks.length; ++c) {
+            line = "\t" + ("" + 0).pad(8) + "  |";
+            for (var c = 0; c < ex.chunks.length; c++) {
                 if (c % 80 == 0 && c != 0) {
                     print(line + "|");
-                    line = "\t" + sh._padStr("" + sh._dataFormat(ex.chunkBytes * c), 8) + "  |";
+                    line = "\t" + sh._dataFormat(ex.chunkBytes * c).pad(8) + "  |";
                 }
                 var inMem = ex.chunks[c];
                 if (inMem <= .001) line += " ";
@@ -562,13 +558,13 @@ DBCollection.prototype.getPagesInRAM = function(params) {
 
     if (stats.extents) {
         print("--- extent overview ---\n");
-        for (var i = 0; i < stats.extents.length; ++i) {
+        for (var i = 0; i < stats.extents.length; i++) {
             var ex = stats.extents[i];
-            print(sh._padStr("" + i, 3) + " " + formatExtentData(ex));
+            print(("" + i).pad(3) + " " + formatExtentData(ex));
         }
         print();
         if (params && (params.granularity || params.numberOfChunks)) {
-            for (var i = 0; i < stats.extents.length; ++i) {
+            for (var i = 0; i < stats.extents.length; i++) {
                 printExtent(stats.extents[i], i);
             }
         } else {
