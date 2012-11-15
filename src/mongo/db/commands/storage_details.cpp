@@ -1,5 +1,3 @@
-// storage_details.cpp
-
 /*    Copyright 2012 10gen Inc.
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
@@ -81,7 +79,7 @@ namespace {
         DiskStorageData(long long diskBytes) : numEntries(0), bsonBytes(0), recBytes(0),
                                                onDiskBytes(diskBytes), characteristicSum(0),
                                                characteristicCount(0), outOfOrderRecs(0),
-                                               freeRecords() {
+                                               freeRecords() /* initialize array with zeroes */ {
         }
 
         const DiskStorageData& operator += (const DiskStorageData& rhs) {
@@ -671,8 +669,8 @@ namespace {
         params.endOfs = min(params.endOfs, ex->length);
         params.length = params.endOfs - params.startOfs;
         if (params.numberOfSlices != 0) {
-            params.granularity = (params.endOfs - params.startOfs + params.numberOfSlices
-                                  - 1) / params.numberOfSlices;
+            params.granularity = (params.endOfs - params.startOfs + params.numberOfSlices - 1) /
+                                 params.numberOfSlices;
         }
         else if (params.granularity != 0) {
             params.numberOfSlices = ceilingDiv(params.length, params.granularity);
@@ -683,16 +681,13 @@ namespace {
         }
         params.lastSliceLength = params.length -
                 (params.granularity * (params.numberOfSlices - 1));
-        bool success = false;
         switch (subCommand) {
             case SUBCMD_DISK_STORAGE:
-                success = analyzeDiskStorage(nsd, ex, params, errmsg, outputBuilder);
-                break;
+                return analyzeDiskStorage(nsd, ex, params, errmsg, outputBuilder);
             case SUBCMD_PAGES_IN_RAM:
-                success = analyzePagesInRAM(ex, params, errmsg, outputBuilder);
-                break;
+                return analyzePagesInRAM(ex, params, errmsg, outputBuilder);
         }
-        return success;
+        verify(false && "unreachable");
     }
 
     /**
@@ -715,11 +710,9 @@ namespace {
             }
 
             long long storageSize = nsd->storageSize(NULL, NULL);
-            PRINT(storageSize);
 
             if (globalParams.numberOfSlices != 0) {
                 globalParams.granularity = ceilingDiv(storageSize, globalParams.numberOfSlices);
-                PRINT(globalParams.granularity);
             }
 
             BSONArrayBuilder extentsArrayBuilder(outputBuilder.subarrayStart("extents"));
@@ -846,12 +839,7 @@ namespace {
 
         params.showRecords = cmdObj["showRecords"].trueValue();
 
-        try {
-            return runInternal(nsd, extent, subCommand, params, errmsg, result);
-        } catch (const DBException& e) {
-            errmsg = str::stream() << "unexpected error: code " << e.getCode();
-            return false;
-        }
+        return runInternal(nsd, extent, subCommand, params, errmsg, result);
     }
 
 }  // namespace

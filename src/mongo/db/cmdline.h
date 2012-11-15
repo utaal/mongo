@@ -147,7 +147,9 @@ namespace mongo {
          * Switches to enable experimental (unsupported) features.
          */
         struct ExperimentalFeatures {
-            ExperimentalFeatures() : storageDetailsCmdEnabled(false) { }
+            ExperimentalFeatures() :
+                storageDetailsCmdEnabled(false)
+                { }
             bool storageDetailsCmdEnabled; // -- enableExperimentalStorageDetailsCmd
         } experimental;
 
