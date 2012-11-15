@@ -20,6 +20,7 @@
 #include <ctime>
 #include <string>
 
+#include "mongo/base/init.h"
 #include "mongo/db/commands.h"
 #include "mongo/db/db.h"
 #include "mongo/db/jsobj.h"
@@ -314,7 +315,15 @@ namespace {
         bool run(const string& dbname , BSONObj& cmdObj, int, string& errmsg,
                  BSONObjBuilder& result, bool fromRepl);
 
-    } storageDetailsCmd;
+    };
+
+    MONGO_INITIALIZER(StorageDetailsCmd)(InitializerContext* context) {
+        if (cmdLine.experimental.storageDetailsCmdEnabled) {
+            // Leaked intentionally: a Command registers itself when constructed.
+            new StorageDetailsCmd();
+        }
+        return Status::OK();
+    }
 
     /**
      * Extracts the characteristic field from the document, if present and of the type ObjectId,
