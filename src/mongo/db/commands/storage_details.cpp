@@ -76,12 +76,12 @@ namespace {
         double characteristicSum;
         double characteristicCount;
         double outOfOrderRecs;
-        vector<double> freeRecords;
+        double freeRecords[mongo::Buckets];
 
         DiskStorageData(long long diskBytes) : numEntries(0), bsonBytes(0), recBytes(0),
                                                onDiskBytes(diskBytes), characteristicSum(0),
                                                characteristicCount(0), outOfOrderRecs(0),
-                                               freeRecords(mongo::Buckets, 0) {
+                                               freeRecords() {
         }
 
         const DiskStorageData& operator += (const DiskStorageData& rhs) {
@@ -92,11 +92,8 @@ namespace {
             this->characteristicSum += rhs.characteristicSum;
             this->characteristicCount += rhs.characteristicCount;
             this->outOfOrderRecs += rhs.outOfOrderRecs;
-            verify(freeRecords.size() == rhs.freeRecords.size());
-            vector<double>::const_iterator rhsit = rhs.freeRecords.begin();
-            for (vector<double>::iterator thisit = this->freeRecords.begin();
-                     thisit != this->freeRecords.end(); ++thisit, ++rhsit) {
-                *thisit += *rhsit;
+            for (size_t i = 0; i < mongo::Buckets; i++) {
+                this->freeRecords[i] += rhs.freeRecords[i];
             }
             return *this;
         }
@@ -112,7 +109,11 @@ namespace {
                 b.append("characteristicAvg", characteristicSum / characteristicCount);
             }
             if (includeFreeRecords) {
-                b.append("freeRecsPerBucket", freeRecords);
+                BSONArrayBuilder freeRecsPerBucketArrBuilder(b.subarrayStart("freeRecsPerBucket"));
+                for (size_t i = 0; i < mongo::Buckets; i++) {
+                    freeRecsPerBucketArrBuilder.append(freeRecords[i]);
+                }
+                freeRecsPerBucketArrBuilder.doneFast();
             }
         }
     };
@@ -392,7 +393,7 @@ namespace {
         for (RecPos::SliceIterator it = pos.iterateSlices(); !it.end(); ++it) {
 
             DiskStorageData& slice = sliceData[it->sliceNum];
-            slice.freeRecords.at(bucketNum) += it->ratioHere;
+            slice.freeRecords[bucketNum] += it->ratioHere;
             spansRequestedArea = true;
         }
 
@@ -422,7 +423,7 @@ namespace {
         bool spansRequestedArea = false;
         for (RecPos::SliceIterator it = pos.iterateSlices(); !it.end(); ++it) {
             spansRequestedArea = true;
-            DiskStorageData& slice = sliceData.at(it->sliceNum);
+            DiskStorageData& slice = sliceData[it->sliceNum];
             slice.numEntries += it->ratioHere;
             slice.recBytes += it->sizeHere;
             slice.bsonBytes += it->ratioHere * obj.objsize();
@@ -731,11 +732,10 @@ namespace {
                                                  // globalParams.numberOfSlices refers to the
                                                  // total number of slices across all the
                                                  // extents
-                {
-                    BSONObjBuilder extentBuilder(extentsArrayBuilder.subobjStart());
-                    success = analyzeExtent(nsd, curExtent, subCommand, extentParams, errmsg,
-                                            extentBuilder);
-                }
+                BSONObjBuilder extentBuilder(extentsArrayBuilder.subobjStart());
+                success = analyzeExtent(nsd, curExtent, subCommand, extentParams, errmsg,
+                                        extentBuilder);
+                extentBuilder.doneFast();
             }
             extentsArrayBuilder.doneFast();
         }
