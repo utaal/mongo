@@ -475,11 +475,11 @@ namespace mongo {
               << "Provides detailed and aggregate information and statistics for a btree. "
               << "The entire btree is walked on every call. This command takes a read lock, "
               << "requires the entire btree storage to be paged-in and will be slow on large "
-              << "indexes. Requires an index name in {index: '_name'} and optionally an array "
+              << "indexes. Requires an index name in {index: '_name'}. Accepts and optional array "
               << "of the nodes to be expanded, {expandNodes: [...]}. "
-              << "For example, {indexStats: 'collection', index: '_id', expandNodes: [0, 4, 5]} "
-              << "aggregates statistics for the _id index for 'collection' and expands root, "
-              << "the child node at index 4 of root, and the child node at index 5 of the latter.";
+              << "For example, {indexStats: 'collection', index: '_id', expandNodes: [0, 4]} "
+              << "aggregates statistics for the _id index for 'collection' and expands root "
+              << "and the fifth child of root.";
         }
 
         virtual LockType locktype() const { return READ; }
