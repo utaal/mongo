@@ -1,6 +1,4 @@
-/** @file storage_details.cpp
- * collection.storageDetails({...}) command
- */
+// storage_details.cpp
 
 /*    Copyright 2012 10gen Inc.
  *
