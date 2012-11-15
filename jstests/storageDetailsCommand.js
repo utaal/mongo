@@ -8,7 +8,7 @@ for (var i = 0; i < 3000; ++i) {
 }
 
 function test() {
-    var result = t.diskStorageStats({numberOfChunks: 100});
+    var result = t.diskStorageStats({numberOfSlices: 100});
     if (result["bad cmd"]) {
         print("storageDetails command not available: skipping");
         return;
@@ -40,15 +40,15 @@ function test() {
         assert.eq(extents[i].range.length, 2);
         assert.eq(extents[i].isCapped, false);
         checkDiskStats(extents[i]);
-        assert(extents[i].chunks instanceof Array);
-        for (var c = 0; c < extents[i].chunks[c]; ++c) {
-            assert(isObject(extents[i].chunks[c]));
-            assert.neq(extents[i].chunks[c], null);
-            checkStats(extents[i].chunks[c]);
+        assert(extents[i].slices instanceof Array);
+        for (var c = 0; c < extents[i].slices[c]; ++c) {
+            assert(isObject(extents[i].slices[c]));
+            assert.neq(extents[i].slices[c], null);
+            checkStats(extents[i].slices[c]);
         }
     }
 
-    result = t.pagesInRAM({numberOfChunks: 100});
+    result = t.pagesInRAM({numberOfSlices: 100});
     assert(result.ok);
 
     assert(result.extents instanceof Array);
@@ -61,9 +61,9 @@ function test() {
         assert(isNumber(extents[i].onDiskBytes));
         assert(isNumber(extents[i].inMem));
 
-        assert(extents[i].chunks instanceof Array);
-        for (var c = 0; c < extents[i].chunks.length; ++c) {
-            assert(isNumber(extents[i].chunks[c]));
+        assert(extents[i].slices instanceof Array);
+        for (var c = 0; c < extents[i].slices.length; ++c) {
+            assert(isNumber(extents[i].slices[c]));
         }
     }
 
@@ -84,9 +84,9 @@ function test() {
         assert.commandFailed(result);
         assert(result.errmsg.match(/granularity.*number/));
 
-        result = helper.apply(t, [{numberOfChunks: 'a'}]);
+        result = helper.apply(t, [{numberOfSlices: 'a'}]);
         assert.commandFailed(result);
-        assert(result.errmsg.match(/numberOfChunks.*number/));
+        assert(result.errmsg.match(/numberOfSlices.*number/));
 
         result = helper.apply(t, [{extent: 100}]);
         assert.commandFailed(result);

@@ -457,7 +457,7 @@ DBCollection.prototype.getDiskStorageStats = function(params) {
 
     var BAR_WIDTH = 70;
 
-    var formatChunkData = function(data) {
+    var formatSliceData = function(data) {
         var bar = _barFormat([
             [data.bsonBytes / data.onDiskBytes, "="],
             [(data.recBytes - data.bsonBytes) / data.onDiskBytes, "-"]
@@ -473,12 +473,12 @@ DBCollection.prototype.getDiskStorageStats = function(params) {
 
     var printExtent = function(ex, rng) {
         print("--- extent " + rng + " ---");
-        print("tot " + formatChunkData(ex));
+        print("tot " + formatSliceData(ex));
         print();
-        if (ex.chunks) {
-            for (var c = 0; c < ex.chunks.length; c++) {
-                var chunk = ex.chunks[c];
-                print(("" + c).pad(3) + " " + formatChunkData(chunk));
+        if (ex.slices) {
+            for (var c = 0; c < ex.slices.length; c++) {
+                var slice = ex.slices[c];
+                print(("" + c).pad(3) + " " + formatSliceData(slice));
             }
             print();
         }
@@ -488,10 +488,10 @@ DBCollection.prototype.getDiskStorageStats = function(params) {
         print("--- extent overview ---\n");
         for (var i = 0; i < stats.extents.length; i++) {
             var ex = stats.extents[i];
-            print(("" + i).pad(3) + " " + formatChunkData(ex));
+            print(("" + i).pad(3) + " " + formatSliceData(ex));
         }
         print();
-        if (params && (params.granularity || params.numberOfChunks)) {
+        if (params && (params.granularity || params.numberOfSlices)) {
             for (var i = 0; i < stats.extents.length; i++) {
                 printExtent(stats.extents[i], i);
             }
@@ -532,19 +532,19 @@ DBCollection.prototype.getPagesInRAM = function(params) {
         print("--- extent " + rng + " ---");
         print("tot " + formatExtentData(ex));
         print();
-        if (ex.chunks) {
-            print("\tchunks, percentage of pages in memory (< .1% : ' ', <25% : '.', " +
+        if (ex.slices) {
+            print("\tslices, percentage of pages in memory (< .1% : ' ', <25% : '.', " +
                   "<50% : '_', <75% : '=', >75% : '#')");
             print();
-            print("\t" + "offset".pad(8) + "  [chunks...] (each chunk is " +
-                  sh._dataFormat(ex.chunkBytes) + ")");
+            print("\t" + "offset".pad(8) + "  [slices...] (each slice is " +
+                  sh._dataFormat(ex.sliceBytes) + ")");
             line = "\t" + ("" + 0).pad(8) + "  [";
-            for (var c = 0; c < ex.chunks.length; c++) {
+            for (var c = 0; c < ex.slices.length; c++) {
                 if (c % 80 == 0 && c != 0) {
                     print(line + "]");
-                    line = "\t" + sh._dataFormat(ex.chunkBytes * c).pad(8) + "  [";
+                    line = "\t" + sh._dataFormat(ex.sliceBytes * c).pad(8) + "  [";
                 }
-                var inMem = ex.chunks[c];
+                var inMem = ex.slices[c];
                 if (inMem <= .001) line += " ";
                 else if (inMem <= .25) line += ".";
                 else if (inMem <= .5) line += "_";
@@ -563,13 +563,13 @@ DBCollection.prototype.getPagesInRAM = function(params) {
             print(("" + i).pad(3) + " " + formatExtentData(ex));
         }
         print();
-        if (params && (params.granularity || params.numberOfChunks)) {
+        if (params && (params.granularity || params.numberOfSlices)) {
             for (var i = 0; i < stats.extents.length; i++) {
                 printExtent(stats.extents[i], i);
             }
         } else {
             print("use getPagesInRAM({granularity: _bytes_}) or " +
-                  "getPagesInRAM({numberOfChunks: _num_} for details");
+                  "getPagesInRAM({numberOfSlices: _num_} for details");
             print("use pagesInRAM(...) for json output, same parameters apply");
         }
     } else {

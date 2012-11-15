@@ -52,22 +52,22 @@ namespace {
         int startOfs;
         int endOfs;
         int length;
-        int numberOfChunks;
+        int numberOfSlices;
         int granularity;
-        int lastChunkLength;
+        int lastSliceLength;
         string characteristicField;
         bool processDeletedRecords;
         bool showRecords;
         time_t startTime;
 
-        AnalyzeParams() : startOfs(0), endOfs(INT_MAX), length(INT_MAX), numberOfChunks(0),
-                          granularity(0), lastChunkLength(0), characteristicField("_id"),
+        AnalyzeParams() : startOfs(0), endOfs(INT_MAX), length(INT_MAX), numberOfSlices(0),
+                          granularity(0), lastSliceLength(0), characteristicField("_id"),
                           processDeletedRecords(true), showRecords(false), startTime(time(NULL)) {
         }
     };
 
     /**
-     * Aggregated information per chunk / extent.
+     * Aggregated information per slice / extent.
      */
     struct DiskStorageData {
         double numEntries;
@@ -119,47 +119,47 @@ namespace {
     };
 
     /**
-     * Helper to calculate which chunks the current record overlaps and how much of the record
+     * Helper to calculate which slices the current record overlaps and how much of the record
      * is in each of them.
      * E.g.
      *                 3.5M      4M     4.5M      5M      5.5M       6M
-     *     chunks ->    |   12   |   13   |   14   |   15   |   16   |
+     *     slices ->    |   12   |   13   |   14   |   15   |   16   |
      *     record ->         [-------- 1.35M --------]
      *
      * results in something like:
-     *     firstChunkNum = 12
-     *     lastChunkNum = 15
-     *     sizeInFirstChunk = 0.25M
-     *     sizeInLastChunk = 0.10M
-     *     sizeInMiddleChunk = 0.5M (== size of chunk)
-     *     inFirstChunkRatio = 0.25M / 1.35M = 0.185...
-     *     inLastChunkRatio = 0.10M / 1.35M = 0.074...
-     *     inMiddleChunkRatio = 0.5M / 1.35M = 0.37...
+     *     firstSliceNum = 12
+     *     lastSliceNum = 15
+     *     sizeInFirstSlice = 0.25M
+     *     sizeInLastSlice = 0.10M
+     *     sizeInMiddleSlice = 0.5M (== size of slice)
+     *     inFirstSliceRatio = 0.25M / 1.35M = 0.185...
+     *     inLastSliceRatio = 0.10M / 1.35M = 0.074...
+     *     inMiddleSliceRatio = 0.5M / 1.35M = 0.37...
      *
-     * The quasi-iterator ChunkIterator is available to easily iterate over the chunks spanned
+     * The quasi-iterator SliceIterator is available to easily iterate over the slices spanned
      * by the record and to obtain how much of the records belongs to each.
      *
-     *    for (RecPos::ChunkIterator it = pos.iterateChunks(); !it.end(); ++it) {
-     *        RecPos::ChunkInfo res = *it;
-     *        // res contains the current chunk number, the number of bytes belonging to the current
-     *        // chunk, and the ratio with the full size of the record
+     *    for (RecPos::SliceIterator it = pos.iterateSlices(); !it.end(); ++it) {
+     *        RecPos::SliceInfo res = *it;
+     *        // res contains the current slice number, the number of bytes belonging to the current
+     *        // slice, and the ratio with the full size of the record
      *    }
      *
      */
     struct RecPos {
         bool outOfRange;
-        int firstChunkNum;
-        int lastChunkNum;
-        int sizeInFirstChunk;
-        int sizeInLastChunk;
-        int sizeInMiddleChunk;
-        double inFirstChunkRatio;
-        double inLastChunkRatio;
-        double inMiddleChunkRatio;
-        int numberOfChunks;
+        int firstSliceNum;
+        int lastSliceNum;
+        int sizeInFirstSlice;
+        int sizeInLastSlice;
+        int sizeInMiddleSlice;
+        double inFirstSliceRatio;
+        double inLastSliceRatio;
+        double inMiddleSliceRatio;
+        int numberOfSlices;
 
         /**
-         * Calculate position of record among chunks.
+         * Calculate position of record among slices.
          * @param recOfs record offset as reported by DiskLoc
          * @param recLen record on-disk size with headers included
          * @param extentOfs extent offset as reported by DiskLoc
@@ -167,7 +167,7 @@ namespace {
          */
         static RecPos from(int recOfs, int recLen, int extentOfs, const AnalyzeParams& params) {
             RecPos res;
-            res.numberOfChunks = params.numberOfChunks;
+            res.numberOfSlices = params.numberOfSlices;
             // startsAt and endsAt are extent-relative
             int startsAt = recOfs - extentOfs;
             int endsAt = startsAt + recLen;
@@ -178,96 +178,96 @@ namespace {
             else {
                 res.outOfRange = false;
             }
-            res.firstChunkNum = (startsAt - params.startOfs) / params.granularity;
-            res.lastChunkNum = (endsAt - params.startOfs) / params.granularity;
+            res.firstSliceNum = (startsAt - params.startOfs) / params.granularity;
+            res.lastSliceNum = (endsAt - params.startOfs) / params.granularity;
 
             // extent-relative
-            int endOfFirstChunk = (res.firstChunkNum + 1) * params.granularity + params.startOfs;
-            res.sizeInFirstChunk = min(endOfFirstChunk - startsAt, recLen);
-            res.sizeInMiddleChunk = params.granularity;
-            res.sizeInLastChunk = recLen - res.sizeInFirstChunk -
-                                  params.granularity * (res.lastChunkNum - res.firstChunkNum
+            int endOfFirstSlice = (res.firstSliceNum + 1) * params.granularity + params.startOfs;
+            res.sizeInFirstSlice = min(endOfFirstSlice - startsAt, recLen);
+            res.sizeInMiddleSlice = params.granularity;
+            res.sizeInLastSlice = recLen - res.sizeInFirstSlice -
+                                  params.granularity * (res.lastSliceNum - res.firstSliceNum
                                                         - 1);
-            if (res.sizeInLastChunk < 0) {
-                res.sizeInLastChunk = 0;
+            if (res.sizeInLastSlice < 0) {
+                res.sizeInLastSlice = 0;
             }
-            res.inFirstChunkRatio = static_cast<double>(res.sizeInFirstChunk) / recLen;
-            res.inMiddleChunkRatio = static_cast<double>(res.sizeInMiddleChunk) / recLen;
-            res.inLastChunkRatio = static_cast<double>(res.sizeInLastChunk) / recLen;
+            res.inFirstSliceRatio = static_cast<double>(res.sizeInFirstSlice) / recLen;
+            res.inMiddleSliceRatio = static_cast<double>(res.sizeInMiddleSlice) / recLen;
+            res.inLastSliceRatio = static_cast<double>(res.sizeInLastSlice) / recLen;
             return res;
         }
 
         // See RecPos class description
-        struct ChunkInfo {
-            int chunkNum;
+        struct SliceInfo {
+            int sliceNum;
             int sizeHere;
             double ratioHere;
         };
 
         /**
-         * Iterates over chunks spanned by the record.
+         * Iterates over slices spanned by the record.
          */
-        class ChunkIterator {
+        class SliceIterator {
         public:
-            ChunkIterator(RecPos& pos) : _pos(pos), _valid(false) {
-                _curChunk.chunkNum = pos.firstChunkNum >= 0 ? _pos.firstChunkNum : 0;
+            SliceIterator(RecPos& pos) : _pos(pos), _valid(false) {
+                _curSlice.sliceNum = pos.firstSliceNum >= 0 ? _pos.firstSliceNum : 0;
             }
 
             bool end() const {
                 return _pos.outOfRange 
-                    || _curChunk.chunkNum >= _pos.numberOfChunks
-                    || _curChunk.chunkNum > _pos.lastChunkNum;
+                    || _curSlice.sliceNum >= _pos.numberOfSlices
+                    || _curSlice.sliceNum > _pos.lastSliceNum;
             }
 
-            ChunkInfo* operator->() {
+            SliceInfo* operator->() {
                 return get();
             }
 
-            ChunkInfo& operator*() {
+            SliceInfo& operator*() {
                 return *(get());
             }
 
             // preincrement
-            ChunkIterator& operator++() {
-                _curChunk.chunkNum++;
+            SliceIterator& operator++() {
+                _curSlice.sliceNum++;
                 _valid = false;
                 return *this;
             }
 
         private:
-            ChunkInfo* get() {
+            SliceInfo* get() {
                 verify(!end());
                 if (!_valid) {
-                    if (_curChunk.chunkNum == _pos.firstChunkNum) {
-                        _curChunk.sizeHere = _pos.sizeInFirstChunk;
-                        _curChunk.ratioHere = _pos.inFirstChunkRatio;
+                    if (_curSlice.sliceNum == _pos.firstSliceNum) {
+                        _curSlice.sizeHere = _pos.sizeInFirstSlice;
+                        _curSlice.ratioHere = _pos.inFirstSliceRatio;
                     }
-                    else if (_curChunk.chunkNum == _pos.lastChunkNum) {
-                        _curChunk.sizeHere = _pos.sizeInLastChunk;
-                        _curChunk.ratioHere = _pos.inLastChunkRatio;
+                    else if (_curSlice.sliceNum == _pos.lastSliceNum) {
+                        _curSlice.sizeHere = _pos.sizeInLastSlice;
+                        _curSlice.ratioHere = _pos.inLastSliceRatio;
                     }
                     else {
-                        DEV verify(_pos.firstChunkNum < _curChunk.chunkNum &&
-                                   _curChunk.chunkNum < _pos.lastChunkNum);
-                        _curChunk.sizeHere = _pos.sizeInMiddleChunk;
-                        _curChunk.ratioHere = _pos.inMiddleChunkRatio;
+                        DEV verify(_pos.firstSliceNum < _curSlice.sliceNum &&
+                                   _curSlice.sliceNum < _pos.lastSliceNum);
+                        _curSlice.sizeHere = _pos.sizeInMiddleSlice;
+                        _curSlice.ratioHere = _pos.inMiddleSliceRatio;
                     }
-                    verify(_curChunk.sizeHere >= 0 && _curChunk.ratioHere >= 0);
+                    verify(_curSlice.sizeHere >= 0 && _curSlice.ratioHere >= 0);
                     _valid = true;
                 }
-                return &_curChunk;
+                return &_curSlice;
             }
 
             RecPos& _pos;
-            ChunkInfo _curChunk;
+            SliceInfo _curSlice;
 
-            // if _valid, data in _curChunk refers to the current chunk, otherwise it needs
+            // if _valid, data in _curSlice refers to the current slice, otherwise it needs
             // to be computed
             bool _valid;
         };
 
-        ChunkIterator iterateChunks() {
-            return ChunkIterator(*this);
+        SliceIterator iterateSlices() {
+            return SliceIterator(*this);
         }
     };
 
@@ -297,11 +297,11 @@ namespace {
               << "Select the desired subcommand with {analyze: 'diskStorage' | 'pagesInRAM'}; "
               << "specify {extent: num_} and, optionally, {range: [start, end]} to restrict "
               << "processing to a single extent (start and end are offsets from the beginning of "
-              << "the extent. {granularity: bytes} or {numberOfChunks: num_} enable aggregation of "
-              << "statistic per-chunk: the extent(s) will either be subdivided in about "
-              << "'numberOfChunks' chunks or in chunks of size 'granularity'. "
+              << "the extent. {granularity: bytes} or {numberOfSlices: num_} enable aggregation of "
+              << "statistic per-slice: the extent(s) will either be subdivided in about "
+              << "'numberOfSlices' slices or in slices of size 'granularity'. "
               << "{characteristicField: dotted_path} enables collection of a field to make "
-              << "it possible to identify which kind of record belong to each chunk/extent. "
+              << "it possible to identify which kind of record belong to each slice/extent. "
               << "{showRecords: true} enables a dump of all records and deleted records "
               << "encountered. Example: "
               << "{storageDetails: 'collectionName', analyze: 'diskStorage', granularity: 1 << 20}";
@@ -366,7 +366,7 @@ namespace {
      */
     void processDeletedRecord(const DiskLoc& dl, const DeletedRecord* dr, const Extent* ex,
                               const AnalyzeParams& params, int bucketNum,
-                              vector<DiskStorageData>& chunkData,
+                              vector<DiskStorageData>& sliceData,
                               BSONArrayBuilder* deletedRecordsArrayBuilder) {
 
         killCurrentOp.checkForInterrupt();
@@ -382,10 +382,10 @@ namespace {
 
         RecPos pos = RecPos::from(dl.getOfs(), dr->lengthWithHeaders(), extentOfs, params);
         bool spansRequestedArea = false;
-        for (RecPos::ChunkIterator it = pos.iterateChunks(); !it.end(); ++it) {
+        for (RecPos::SliceIterator it = pos.iterateSlices(); !it.end(); ++it) {
 
-            DiskStorageData& chunk = chunkData[it->chunkNum];
-            chunk.freeRecords.at(bucketNum) += it->ratioHere;
+            DiskStorageData& slice = sliceData[it->sliceNum];
+            slice.freeRecords.at(bucketNum) += it->ratioHere;
             spansRequestedArea = true;
         }
 
@@ -400,7 +400,7 @@ namespace {
      * analyzeDiskStorage helper which processes a single record.
      */
     void processRecord(const DiskLoc& dl, const DiskLoc& prevDl, const Record* r, int extentOfs,
-                       const AnalyzeParams& params, vector<DiskStorageData>& chunkData,
+                       const AnalyzeParams& params, vector<DiskStorageData>& sliceData,
                        BSONArrayBuilder* recordsArrayBuilder) {
         killCurrentOp.checkForInterrupt();
 
@@ -413,18 +413,18 @@ namespace {
 
         RecPos pos = RecPos::from(dl.getOfs(), recBytes, extentOfs, params);
         bool spansRequestedArea = false;
-        for (RecPos::ChunkIterator it = pos.iterateChunks(); !it.end(); ++it) {
+        for (RecPos::SliceIterator it = pos.iterateSlices(); !it.end(); ++it) {
             spansRequestedArea = true;
-            DiskStorageData& chunk = chunkData.at(it->chunkNum);
-            chunk.numEntries += it->ratioHere;
-            chunk.recBytes += it->sizeHere;
-            chunk.bsonBytes += it->ratioHere * obj.objsize();
+            DiskStorageData& slice = sliceData.at(it->sliceNum);
+            slice.numEntries += it->ratioHere;
+            slice.recBytes += it->sizeHere;
+            slice.bsonBytes += it->ratioHere * obj.objsize();
             if (hasCharacteristicField) {
-                chunk.characteristicCount += it->ratioHere;
-                chunk.characteristicSum += it->ratioHere * characteristicFieldValue;
+                slice.characteristicCount += it->ratioHere;
+                slice.characteristicSum += it->ratioHere * characteristicFieldValue;
             }
             if (isLocatedBeforePrevious) {
-                chunk.outOfOrderRecs += it->ratioHere;
+                slice.outOfOrderRecs += it->ratioHere;
             }
         }
 
@@ -453,10 +453,10 @@ namespace {
     /**
      * Provides aggregate and (if requested) detailed information regarding the layout of
      * records and deleted records in the extent.
-     * The extent is split in params.numberOfChunks chunks of params.granularity bytes each
+     * The extent is split in params.numberOfSlices slices of params.granularity bytes each
      * (except the last one which could be shorter).
      * Iteration is performed over all records and deleted records in the specified (part of)
-     * extent and the output contains aggregate information for the entire record and per-chunk.
+     * extent and the output contains aggregate information for the entire record and per-slice.
      * The typical output has the form:
      *
      *     { extentHeaderBytes: <size>,
@@ -477,8 +477,8 @@ namespace {
      * If its value is an OID or Date, the timestamp (as seconds since epoch) will be extracted;
      * numeric values are converted to double and other bson types are ignored.
      *
-     * The list of chunks follows, with similar information aggregated per-chunk:
-     *       chunks: [
+     * The list of slices follows, with similar information aggregated per-slice:
+     *       slices: [
      *           { numEntries: <number of records>,
      *             ...
      *             freeRecsPerBucket: [ ... ]
@@ -515,9 +515,9 @@ namespace {
         result.append("range", BSON_ARRAY(params.startOfs << params.endOfs));
         result.append("isCapped", isCapped);
 
-        vector<DiskStorageData> chunkData(params.numberOfChunks,
+        vector<DiskStorageData> sliceData(params.numberOfSlices,
                                           DiskStorageData(params.granularity));
-        chunkData[params.numberOfChunks - 1].onDiskBytes = params.lastChunkLength;
+        sliceData[params.numberOfSlices - 1].onDiskBytes = params.lastSliceLength;
         Record* r;
         int extentOfs = ex->myLoc.getOfs();
 
@@ -529,7 +529,7 @@ namespace {
         DiskLoc prevDl = ex->firstRecord;
         for (DiskLoc dl = ex->firstRecord; ! dl.isNull(); dl = r->nextInExtent(dl)) {
             r = dl.rec();
-            processRecord(dl, prevDl, r, extentOfs, params, chunkData,
+            processRecord(dl, prevDl, r, extentOfs, params, sliceData,
                           recordsArrayBuilder.get());
             prevDl = dl;
         }
@@ -550,7 +550,7 @@ namespace {
                 DiskLoc dl = nsd->deletedList[bucketNum];
                 while (!dl.isNull()) {
                     DeletedRecord* dr = dl.drec();
-                    processDeletedRecord(dl, dr, ex, params, bucketNum, chunkData,
+                    processDeletedRecord(dl, dr, ex, params, bucketNum, sliceData,
                                          deletedRecordsArrayBuilder.get());
                     dl = dr->nextDeleted();
                 }
@@ -561,39 +561,39 @@ namespace {
         }
 
         DiskStorageData extentData(0);
-        if (chunkData.size() > 1) {
-            BSONArrayBuilder chunkArrayBuilder (result.subarrayStart("chunks"));
-            for (vector<DiskStorageData>::iterator it = chunkData.begin();
-                 it != chunkData.end(); ++it) {
+        if (sliceData.size() > 1) {
+            BSONArrayBuilder sliceArrayBuilder (result.subarrayStart("slices"));
+            for (vector<DiskStorageData>::iterator it = sliceData.begin();
+                 it != sliceData.end(); ++it) {
 
                 killCurrentOp.checkForInterrupt();
                 extentData += *it;
-                BSONObjBuilder chunkBuilder;
-                it->appendToBSONObjBuilder(chunkBuilder, processingDeletedRecords);
-                chunkArrayBuilder.append(chunkBuilder.obj());
+                BSONObjBuilder sliceBuilder;
+                it->appendToBSONObjBuilder(sliceBuilder, processingDeletedRecords);
+                sliceArrayBuilder.append(sliceBuilder.obj());
             }
-            chunkArrayBuilder.doneFast();
+            sliceArrayBuilder.doneFast();
             extentData.appendToBSONObjBuilder(result, processingDeletedRecords);
         } else {
-            chunkData[0].appendToBSONObjBuilder(result, processingDeletedRecords);
+            sliceData[0].appendToBSONObjBuilder(result, processingDeletedRecords);
         }
         return true;
     }
 
     /**
-     * Outputs which percentage of pages are in memory for the entire extent and per-chunk.
-     * Refer to analyzeDiskStorage for a description of what chunks are.
+     * Outputs which percentage of pages are in memory for the entire extent and per-slice.
+     * Refer to analyzeDiskStorage for a description of what slices are.
      *
      * The output has the form:
      *     { pageBytes: <system page size>,
      *       onDiskBytes: <size of the extent>,
      *       inMem: <ratio of pages in memory for the entire extent>,
-     * (opt) chunks: [ ... ] (only present if either params.granularity or numberOfChunks is not
-     *                        zero and there exist more than one chunk for this extent)
-     * (opt) chunkBytes: <size of each chunk>
+     * (opt) slices: [ ... ] (only present if either params.granularity or numberOfSlices is not
+     *                        zero and there exist more than one slice for this extent)
+     * (opt) sliceBytes: <size of each slice>
      *     }
      *
-     * The nth element in the chunks array is the ratio of pages in memory for the nth chunk.
+     * The nth element in the slices array is the ratio of pages in memory for the nth slice.
      *
      * @return true on success, false on failure (partial output may still be present)
      */
@@ -610,28 +610,28 @@ namespace {
         int extentInMemCount = 0; // number of pages in memory for the entire extent
 
         scoped_ptr<BSONArrayBuilder> arr;
-        int chunkBytes = params.granularity;
+        int sliceBytes = params.granularity;
 
-        if (params.numberOfChunks > 1) {
-            result.append("chunkBytes", chunkBytes);
-            arr.reset(new BSONArrayBuilder(result.subarrayStart("chunks")));
+        if (params.numberOfSlices > 1) {
+            result.append("sliceBytes", sliceBytes);
+            arr.reset(new BSONArrayBuilder(result.subarrayStart("slices")));
         }
 
-        for (int chunk = 0; chunk < params.numberOfChunks; chunk++) {
-            if (chunk == params.numberOfChunks - 1) {
-                chunkBytes = params.lastChunkLength;
+        for (int slice = 0; slice < params.numberOfSlices; slice++) {
+            if (slice == params.numberOfSlices - 1) {
+                sliceBytes = params.lastSliceLength;
             }
-            int pagesInChunk = ceilingDiv(chunkBytes, pageBytes);
+            int pagesInSlice = ceilingDiv(sliceBytes, pageBytes);
 
-            const char* firstPageAddr = startAddr + (chunk * params.granularity);
+            const char* firstPageAddr = startAddr + (slice * params.granularity);
             vector<char> isInMem;
-            if (! ProcessInfo::pagesInMemory(firstPageAddr, pagesInChunk, &isInMem)) {
+            if (! ProcessInfo::pagesInMemory(firstPageAddr, pagesInSlice, &isInMem)) {
                 errmsg = "system call failed";
                 return false;
             }
 
             int inMemCount = 0;
-            for (int page = 0; page < pagesInChunk; page++) {
+            for (int page = 0; page < pagesInSlice; page++) {
                 if (isInMem[page]) {
                     inMemCount++;
                     extentInMemCount++;
@@ -639,7 +639,7 @@ namespace {
             }
 
             if (arr.get() != NULL) {
-                arr->append(static_cast<double>(inMemCount) / pagesInChunk);
+                arr->append(static_cast<double>(inMemCount) / pagesInSlice);
             }
         }
         if (arr.get() != NULL) {
@@ -653,7 +653,7 @@ namespace {
 
     /**
      * Analyze a single extent.
-     * @param params analysis parameters, will be updated with computed number of chunks or
+     * @param params analysis parameters, will be updated with computed number of slices or
      *               granularity
      */
     bool analyzeExtent(const NamespaceDetails* nsd, const Extent* ex, SubCommand subCommand,
@@ -662,19 +662,19 @@ namespace {
         params.startOfs = max(0, params.startOfs);
         params.endOfs = min(params.endOfs, ex->length);
         params.length = params.endOfs - params.startOfs;
-        if (params.numberOfChunks != 0) {
-            params.granularity = (params.endOfs - params.startOfs + params.numberOfChunks
-                                  - 1) / params.numberOfChunks;
+        if (params.numberOfSlices != 0) {
+            params.granularity = (params.endOfs - params.startOfs + params.numberOfSlices
+                                  - 1) / params.numberOfSlices;
         }
         else if (params.granularity != 0) {
-            params.numberOfChunks = ceilingDiv(params.length, params.granularity);
+            params.numberOfSlices = ceilingDiv(params.length, params.granularity);
         }
         else {
-            params.numberOfChunks = 1;
+            params.numberOfSlices = 1;
             params.granularity = params.length;
         }
-        params.lastChunkLength = params.length -
-                (params.granularity * (params.numberOfChunks - 1));
+        params.lastSliceLength = params.length -
+                (params.granularity * (params.numberOfSlices - 1));
         bool success = false;
         switch (subCommand) {
             case SUBCMD_DISK_STORAGE:
@@ -709,8 +709,8 @@ namespace {
             long long storageSize = nsd->storageSize(NULL, NULL);
             PRINT(storageSize);
 
-            if (globalParams.numberOfChunks != 0) {
-                globalParams.granularity = ceilingDiv(storageSize, globalParams.numberOfChunks);
+            if (globalParams.numberOfSlices != 0) {
+                globalParams.granularity = ceilingDiv(storageSize, globalParams.numberOfSlices);
                 PRINT(globalParams.granularity);
             }
 
@@ -720,9 +720,9 @@ namespace {
                  curExtent = curExtent->getNextExtent()) {
 
                 AnalyzeParams extentParams(globalParams);
-                extentParams.numberOfChunks = 0; // use the specified or calculated granularity;
-                                                 // globalParams.numberOfChunks refers to the
-                                                 // total number of chunks across all the
+                extentParams.numberOfSlices = 0; // use the specified or calculated granularity;
+                                                 // globalParams.numberOfSlices refers to the
+                                                 // total number of slices across all the
                                                  // extents
                 {
                     BSONObjBuilder extentBuilder(extentsArrayBuilder.subobjStart());
@@ -819,13 +819,13 @@ namespace {
         }
         params.granularity = granularityElm.number();
 
-        // { numberOfChunks: num }
-        BSONElement numberOfChunksElm = cmdObj["numberOfChunks"];
-        if (numberOfChunksElm.ok() && !numberOfChunksElm.isNumber()) {
-            errmsg = "numberOfChunks must be a number";
+        // { numberOfSlices: num }
+        BSONElement numberOfSlicesElm = cmdObj["numberOfSlices"];
+        if (numberOfSlicesElm.ok() && !numberOfSlicesElm.isNumber()) {
+            errmsg = "numberOfSlices must be a number";
             return false;
         }
-        params.numberOfChunks = numberOfChunksElm.number();
+        params.numberOfSlices = numberOfSlicesElm.number();
 
         BSONElement characteristicFieldElm = cmdObj["characteristicField"];
         if (characteristicFieldElm.ok()) {
