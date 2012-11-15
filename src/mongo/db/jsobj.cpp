@@ -30,7 +30,6 @@
 #include "mongo/bson/util/atomic_int.h"
 #include "mongo/db/jsobjmanipulator.h"
 #include "mongo/db/json.h"
-#include "mongo/db/nonce.h"
 #include "mongo/platform/float_utils.h"
 #include "mongo/util/base64.h"
 #include "mongo/util/embedded_builder.h"
@@ -282,6 +281,9 @@ namespace mongo {
                     return BSONObj::NE;
                 if ( fn[3] == 'a' && fn[4] == 'r') // matches anything with $near prefix
                     return BSONObj::opNEAR;
+                if (mongoutils::str::equals(fn + 3, "wnear")) {
+                    return BSONObj::opNEWNEAR;
+                }
             }
             else if ( fn[1] == 'm' ) {
                 if ( fn[2] == 'o' && fn[3] == 'd' && fn[4] == 0 )

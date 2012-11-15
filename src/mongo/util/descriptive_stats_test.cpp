@@ -14,7 +14,7 @@ using namespace std;
 
 namespace {
 
-    const int NumQuantiles = 99;
+    const size_t NumQuantiles = 99;
 
     TEST(DistributionEstimators, TestNominalResults) {
         mongo::DistributionEstimators<NumQuantiles> d;
@@ -116,7 +116,7 @@ namespace {
         ASSERT_EQUALS(obj["max"].Number(), e.max());
 
         mongo::BSONObj quantiles = obj["quantiles"].Obj();
-        ASSERT_EQUALS(quantiles.nFields(), NumQuantiles);
+        ASSERT_EQUALS(static_cast<size_t>(quantiles.nFields()), NumQuantiles);
         for (mongo::BSONObjIterator it = quantiles.begin(); it.more(); ++it) {
             ASSERT_EQUALS((*it).Number(), e.icdf(atof((*it).fieldName())));
         }
